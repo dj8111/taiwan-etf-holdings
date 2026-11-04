@@ -1,13 +1,13 @@
 {
   ".github/workflows/update_etf.yml": {
-    "mtime": 1793807566.7723014,
-    "seen": 1793807574.1367471,
-    "ast_hash": "8951fc84a2daefe3f9bd34f869f4041e",
+    "mtime": 1793807873.5112405,
+    "seen": 1793807880.5300324,
+    "ast_hash": "96592ea8f77624589d2a12244910ce14",
     "semantic_hash": ""
   },
   "collectors/__init__.py": {
-    "mtime": 1793807436.9377446,
-    "seen": 1793807574.1367471,
+    "mtime": 1793807601.591874,
+    "seen": 1793807880.5300324,
     "ast_hash": "bc480738b8681d9bacf8095162171fc1",
     "semantic_hash": ""
   },
@@ -30,26 +30,26 @@
     "semantic_hash": ""
   },
   "db/__init__.py": {
-    "mtime": 1793807419.4201229,
-    "seen": 1793807574.1367471,
+    "mtime": 1793807601.6227422,
+    "seen": 1793807880.5300324,
     "ast_hash": "131ee3bcb4d094fcf5a86731d7f6e521",
     "semantic_hash": ""
   },
   "db/models.py": {
-    "mtime": 1793807413.5004878,
-    "seen": 1793807574.1367471,
+    "mtime": 1793807601.6579316,
+    "seen": 1793807880.5300324,
     "ast_hash": "f4a1b2e365be98abd3b08c59357dc62e",
     "semantic_hash": ""
   },
   "db/repository.py": {
-    "mtime": 1793807464.1216881,
-    "seen": 1793807574.1367471,
+    "mtime": 1793807601.6852868,
+    "seen": 1793807880.5300324,
     "ast_hash": "baf78fc9acd0076e6d552f9b853efd02",
     "semantic_hash": ""
   },
   "main.py": {
-    "mtime": 1793807510.9358118,
-    "seen": 1793807574.1367471,
+    "mtime": 1793807601.733162,
+    "seen": 1793807880.5300324,
     "ast_hash": "5022bb330cc1ffe7861aef13819e4add",
     "semantic_hash": ""
   },
@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "collectors/twse_nav.py": {
-    "mtime": 1793807430.698317,
-    "seen": 1793807574.1367471,
-    "ast_hash": "a6b7cf352f524597e0b29e794f671057",
+    "mtime": 1793807587.3594117,
+    "seen": 1793807880.5300324,
+    "ast_hash": "7eb982737db7d6a4a4f88e0a0a65249f",
     "semantic_hash": ""
   }
 }

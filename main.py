@@ -28,7 +28,7 @@ def get_collectors():
 
 def fetch_and_save_navs(target_codes: Optional[List[str]] = None) -> int:
     """
-    抓取臺灣證券交易所全市場 ETF 當日最新每單位淨值、收盤價與折溢價並存入資料庫
+    抓取全市場 (上市 + 上櫃共 364 檔) 當日最新每單位淨值、收盤價與折溢價並存入資料庫
     """
     collector = TWSENavCollector()
     print("[*] 正在從臺灣證券交易所 (TWSE MIS) 抓取每日最新 ETF 淨值與折溢價...")
@@ -50,23 +50,26 @@ def fetch_and_save_navs(target_codes: Optional[List[str]] = None) -> int:
         return count
 
 
-def fetch_all_twse_etf_codes() -> List[dict]:
+def fetch_all_taiwan_etf_codes() -> List[dict]:
     """
-    從臺灣證交所 OpenAPI 取得全體上市 ETF 清單 (約 240+ 檔)
+    從臺灣證交所 MIS 系統取得全台灣股市「全體上市 + 上櫃 ETF 清單」(共 364 檔)
+    包含股票型、高股息、債券型、跨國海外型、期貨槓反型等所有標的
     """
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    url = "https://mis.twse.com.tw/stock/data/all_etf.txt"
     try:
-        resp = requests.get(url, timeout=15)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         if resp.status_code == 200:
             data = resp.json()
-            etfs = [
-                {"code": item.get("Code", "").strip(), "name": item.get("Name", "").strip()}
-                for item in data
-                if item.get("Code", "").strip().startswith("00")
-            ]
-            return etfs
+            etf_dict = {}
+            for group in data.get("a1", []):
+                for item in group.get("msgArray", []):
+                    code = item.get("a", "").strip().upper()
+                    name = item.get("b", "").strip()
+                    if code and code not in etf_dict:
+                        etf_dict[code] = {"code": code, "name": name}
+            return list(etf_dict.values())
     except Exception as e:
-        print(f"[!] 呼叫證交所清單失敗: {e}")
+        print(f"[!] 呼叫證交所全市場 ETF 清單失敗: {e}")
     return []
 
 
@@ -114,25 +117,25 @@ def fetch_and_save(etf_codes: List[str]):
 
 def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
     """
-    批次抓取全台灣所有上市 ETF 持股與全市場每日淨值
+    批次抓取全台灣所有上市櫃 ETF 持股與全市場每日淨值 (全市場共 364 檔)
     """
-    # 1. 同步全市場每日淨值
+    # 1. 先同步全市場 364 檔每日淨值
     fetch_and_save_navs()
 
-    # 2. 批次抓取持股
-    print("[*] 正在從臺灣證券交易所 OpenAPI 取得全體 ETF 列表...")
-    etfs = fetch_all_twse_etf_codes()
+    # 2. 取得全體 ETF 清單並批次抓取持股
+    print("[*] 正在從臺灣證券交易所 MIS 取得全市場全體 ETF 清單...")
+    etfs = fetch_all_taiwan_etf_codes()
     if not etfs:
-        print("[!] 無法取得證交所列表。")
+        print("[!] 無法取得 ETF 列表。")
         return
 
     total = len(etfs)
     target_etfs = etfs[:limit] if limit else etfs
-    print(f"[*] 證交所共發現 {total} 檔 ETF。本次預計抓取 {len(target_etfs)} 檔。\n")
+    print(f"[*] 全市場共發現 {total} 檔 ETF (上市 + 上櫃)。本次預計抓取 {len(target_etfs)} 檔。\n")
 
     codes = [e["code"] for e in target_etfs]
     for i, code in enumerate(codes, 1):
-        print(f"[{i}/{len(codes)}] 處理 {code} 持股明細...")
+        print(f"[{i}/{len(codes)}] 處理 {code} ({target_etfs[i-1]['name'][:12]}) 持股明細...")
         fetch_and_save([code])
         if delay > 0 and i < len(codes):
             time.sleep(delay)
@@ -267,9 +270,6 @@ def show_holdings(etf_code: str, target_date_str: Optional[str] = None, top_n: i
 
 
 def show_nav_history(etf_code: str, limit: int = 30):
-    """
-    顯示某檔 ETF 的歷史每日淨值、市價與折溢價紀錄
-    """
     engine, SessionFactory = init_db()
     with SessionFactory() as session:
         repo = ETFRepository(session)
@@ -388,15 +388,15 @@ def main():
     fetch_parser.add_argument("codes", nargs="+", help="ETF 代號 (如 0050 00878 00919 0056)")
 
     # fetch-nav 命令
-    nav_parser = subparsers.add_parser("fetch-nav", help="專門更新全市場 360+ 檔 ETF 每日淨值與折溢價")
+    nav_parser = subparsers.add_parser("fetch-nav", help="專門更新全市場 364 檔 ETF 每日淨值與折溢價")
     nav_parser.add_argument("codes", nargs="*", default=None, help="指定代號 (留空則更新全市場)")
 
     # fetch-all 命令
-    fetchall_parser = subparsers.add_parser("fetch-all", help="從證交所自動獲取清單並批次抓取全體 ETF")
+    fetchall_parser = subparsers.add_parser("fetch-all", help="從證交所自動獲取全市場清單並批次抓取全體 ETF")
     fetchall_parser.add_argument("--limit", type=int, default=None, help="限制抓取前 N 檔")
     fetchall_parser.add_argument("--delay", type=float, default=1.0, help="每檔抓取間隔秒數")
 
-    # nav 命令 (查看歷史淨值)
+    # nav 命令
     nav_show_parser = subparsers.add_parser("nav", help="查看某檔 ETF 的每日淨值、市價與折溢價走勢")
     nav_show_parser.add_argument("code", help="ETF 代號 (如 0050 或 00878)")
     nav_show_parser.add_argument("--limit", type=int, default=30, help="顯示近 N 筆淨值 (預設 30)")
@@ -458,8 +458,9 @@ def main():
     elif args.command == "search":
         search_stock(args.keyword)
     else:
-        print("未指定子命令，請使用 -h 查看說明。常用命令:")
-        print("  python main.py fetch-nav          更新全市場 360+ 檔 ETF 每日淨值與折溢價")
+        print("未指定子命令，常用命令:")
+        print("  python main.py fetch-nav          更新全市場 364 檔 ETF 每日淨值與折溢價")
+        print("  python main.py fetch-all          批次抓取全市場 364 檔 ETF 持股明細與淨值")
         print("  python main.py nav <代號>         查看該 ETF 歷史每日淨值與折溢價")
         print("  python main.py show <代號>        查看該 ETF 最新每單位淨值與成分股明細")
 
