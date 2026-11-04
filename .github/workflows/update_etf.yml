@@ -1,15 +1,15 @@
-name: 自動更新台股 ETF 持股明細與資料庫
+name: 自動更新台股 ETF 持股明細與每日淨值資料庫
 
 on:
   schedule:
     # 台灣時間 (UTC+8) 週一至週五 18:30 執行 (UTC 10:30)
+    # 此時當日台股收盤，證交所與各大投信已完成當日淨值與 PCF 揭露
     - cron: '30 10 * * 1-5'
   
-  # 支援在 GitHub 網頁上手動點擊 "Run workflow" 隨時執行
   workflow_dispatch:
     inputs:
       target_mode:
-        description: '抓取模式 (popular: 核心熱門款 / all: 全市場)'
+        description: '持股抓取模式 (popular: 核心熱門款 / all: 全市場)'
         required: true
         default: 'popular'
         type: choice
@@ -21,7 +21,7 @@ permissions:
   contents: write
 
 jobs:
-  update-holdings:
+  update-holdings-and-nav:
     runs-on: ubuntu-latest
 
     steps:
@@ -39,17 +39,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: 同步全市場 360+ 檔 ETF 當日每單位淨值與折溢價
+        run: |
+          python main.py fetch-nav
+
       - name: 執行 ETF 持股明細更新
         run: |
           if [ "${{ inputs.target_mode }}" = "all" ]; then
-            echo "開始抓取全市場所有 ETF..."
+            echo "開始抓取全市場所有 ETF 持股..."
             python main.py fetch-all --delay 1.0
           else
-            echo "抓取市場核心主流 ETF..."
+            echo "抓取市場核心主流 ETF 持股..."
             python main.py fetch 0050 0056 00878 00919 00929 006208 00713 00939 00940 00692 0052 00915 00934 00936
           fi
 
-      - name: 匯出最新 CSV 報表
+      - name: 匯出最新 CSV 報表 (持股與每日淨值歷史)
         run: |
           python main.py export --dir data
 
@@ -68,6 +72,6 @@ jobs:
             echo "今日資料無變更，跳過 Commit。"
           else
             TODAY=$(date '+%Y-%m-%d')
-            git commit -m "chore(data): 自動更新 ETF 持股資料庫與 CSV [${TODAY}]"
+            git commit -m "chore(data): 自動更新 ETF 持股與每日淨值 [${TODAY}]"
             git push
           fi

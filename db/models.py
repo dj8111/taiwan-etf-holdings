@@ -1,5 +1,5 @@
 """
-Database models and connection setup for ETF holdings using SQLAlchemy.
+Database models and connection setup for ETF holdings & daily NAV using SQLAlchemy.
 """
 
 from datetime import datetime, date
@@ -35,8 +35,9 @@ class ETFFund(Base):
     currency = Column(String(10), default="TWD", doc="計價幣別")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 關聯到每日持股明細
+    # 關聯到每日持股明細與每日淨值
     holdings = relationship("ETFHolding", back_populates="fund", cascade="all, delete-orphan")
+    navs = relationship("ETFNav", back_populates="fund", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<ETFFund(code='{self.etf_code}', name='{self.name}', issuer='{self.issuer}')>"
@@ -60,7 +61,6 @@ class ETFHolding(Base):
 
     fund = relationship("ETFFund", back_populates="holdings")
 
-    # 複合唯一約束：確保同一檔 ETF 在同一個基準日，同一檔成分股只有一筆紀錄
     __table_args__ = (
         UniqueConstraint("etf_code", "record_date", "stock_code", name="uq_etf_date_stock"),
         Index("idx_etf_date", "etf_code", "record_date"),
@@ -74,6 +74,35 @@ class ETFHolding(Base):
         )
 
 
+class ETFNav(Base):
+    """
+    ETF 每日每單位淨值 (NAV)、市價與折溢價歷史紀錄表
+    """
+    __tablename__ = "etf_navs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    etf_code = Column(String(10), ForeignKey("etf_funds.etf_code", ondelete="CASCADE"), nullable=False, index=True)
+    record_date = Column(Date, nullable=False, index=True, doc="淨值基準日期")
+    nav = Column(Float, nullable=False, doc="每單位淨值 (NAV)")
+    close_price = Column(Float, nullable=True, doc="市價 / 收盤價")
+    premium_discount_pct = Column(Float, nullable=True, doc="折溢價率百分比 (如 0.39 代表溢價 0.39%, 負數為折價)")
+    prev_nav = Column(Float, nullable=True, doc="前一日淨值")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    fund = relationship("ETFFund", back_populates="navs")
+
+    __table_args__ = (
+        UniqueConstraint("etf_code", "record_date", name="uq_etf_nav_date"),
+        Index("idx_nav_date", "etf_code", "record_date"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<ETFNav(etf='{self.etf_code}', date='{self.record_date}', "
+            f"nav={self.nav}, price={self.close_price}, diff={self.premium_discount_pct}%)>"
+        )
+
+
 def init_db(db_url: str = "sqlite:///etf_data.db"):
     """
     初始化資料庫連線與自動建立資料表
@@ -82,4 +111,3 @@ def init_db(db_url: str = "sqlite:///etf_data.db"):
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
     return engine, session_factory
-

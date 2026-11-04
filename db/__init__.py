@@ -1,2 +1,1 @@
-from .models import Base, ETFFund, ETFHolding, init_db
-
+from .models import Base, ETFFund, ETFHolding, ETFNav, init_db

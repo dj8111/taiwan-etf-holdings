@@ -1,5 +1,5 @@
 """
-Taiwan ETF Holdings CLI Manager & Reverse API Scraper
+Taiwan ETF Holdings & Daily NAV CLI Manager
 """
 
 import os
@@ -11,17 +11,43 @@ from typing import List, Optional
 import requests
 import pandas as pd
 
-from db.models import init_db, ETFFund, ETFHolding
+from db.models import init_db, ETFFund, ETFHolding, ETFNav
 from db.repository import ETFRepository
 from collectors.cathay import CathayCollector
 from collectors.moneydj import MoneyDJCollector
+from collectors.twse_nav import TWSENavCollector
 
 
 def get_collectors():
     return {
         "cathay": CathayCollector(),
         "moneydj": MoneyDJCollector(),
+        "twse_nav": TWSENavCollector(),
     }
+
+
+def fetch_and_save_navs(target_codes: Optional[List[str]] = None) -> int:
+    """
+    抓取臺灣證券交易所全市場 ETF 當日最新每單位淨值、收盤價與折溢價並存入資料庫
+    """
+    collector = TWSENavCollector()
+    print("[*] 正在從臺灣證券交易所 (TWSE MIS) 抓取每日最新 ETF 淨值與折溢價...")
+    nav_map = collector.fetch_all_navs()
+    if not nav_map:
+        print("[!] 未能取得證交所淨值資料。")
+        return 0
+
+    engine, SessionFactory = init_db()
+    with SessionFactory() as session:
+        repo = ETFRepository(session)
+        if target_codes:
+            items_to_save = [nav_map[c.upper()] for c in target_codes if c.upper() in nav_map]
+        else:
+            items_to_save = list(nav_map.values())
+
+        count = repo.save_navs_batch(items_to_save)
+        print(f"    [OK] 成功更新 {count} 檔 ETF 之當日最新每單位淨值紀錄！\n")
+        return count
 
 
 def fetch_all_twse_etf_codes() -> List[dict]:
@@ -45,13 +71,14 @@ def fetch_all_twse_etf_codes() -> List[dict]:
 
 
 def fetch_and_save(etf_codes: List[str]):
+    # 1. 抓取持股明細
     engine, SessionFactory = init_db()
     collectors = get_collectors()
 
     with SessionFactory() as session:
         repo = ETFRepository(session)
         print(f"\n=======================================================")
-        print(f" 開始抓取各投信 ETF 持股明細與比例，存入資料庫")
+        print(f" 開始抓取 ETF 持股明細與每日每單位淨值，存入資料庫")
         print(f" 目標標的: {', '.join(etf_codes)}")
         print(f"=======================================================\n")
 
@@ -59,15 +86,13 @@ def fetch_and_save(etf_codes: List[str]):
             code = code.strip().upper()
             payload = None
 
-            # 1. 優先嘗試官方投信專屬採集器 (例如國泰)
             if code in CathayCollector.FUND_MAP:
                 print(f"[*] 嘗試呼叫 [國泰投信官方 API] 取得 {code} ...")
                 try:
                     payload = collectors["cathay"].fetch_holdings(code)
                 except Exception as e:
-                    print(f"    [!] 國泰官方 API 異常 ({e})，準備切換至備援來源...")
+                    print(f"    [!] 國泰官方 API 異常 ({e})，切換至備援來源...")
 
-            # 2. 若專屬採集器未命中或失敗，使用通用採集器 (MoneyDJ)
             if not payload:
                 print(f"[*] 嘗試透過 [MoneyDJ 數據端點] 取得 {code} ...")
                 try:
@@ -78,16 +103,23 @@ def fetch_and_save(etf_codes: List[str]):
 
             if payload and payload.holdings:
                 count = repo.save_etf_payload(payload)
-                print(f"    [OK] 成功更新: {payload.etf_code} {payload.etf_name} (發行商: {payload.issuer})")
+                print(f"    [OK] 成功更新持股: {payload.etf_code} {payload.etf_name} (發行商: {payload.issuer})")
                 print(f"         基準日期: {payload.record_date} | 成分股檔數: {count} 檔\n")
             else:
                 print(f"    [X] 未能取得 {code} 的持股明細資料。\n")
 
+    # 2. 同步更新這幾檔 ETF 的當日淨值
+    fetch_and_save_navs(etf_codes)
+
 
 def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
     """
-    批次抓取全台灣所有上市 ETF
+    批次抓取全台灣所有上市 ETF 持股與全市場每日淨值
     """
+    # 1. 同步全市場每日淨值
+    fetch_and_save_navs()
+
+    # 2. 批次抓取持股
     print("[*] 正在從臺灣證券交易所 OpenAPI 取得全體 ETF 列表...")
     etfs = fetch_all_twse_etf_codes()
     if not etfs:
@@ -100,7 +132,7 @@ def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
 
     codes = [e["code"] for e in target_etfs]
     for i, code in enumerate(codes, 1):
-        print(f"[{i}/{len(codes)}] 處理 {code} ...")
+        print(f"[{i}/{len(codes)}] 處理 {code} 持股明細...")
         fetch_and_save([code])
         if delay > 0 and i < len(codes):
             time.sleep(delay)
@@ -108,10 +140,11 @@ def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
 
 def export_csv(output_dir: str = "data"):
     """
-    將資料庫持股資料匯出為 CSV 報表：
-    1. etf_holdings_latest.csv (每檔 ETF 最新一筆)
-    2. etf_holdings_all_history.csv (全歷史累積紀錄)
-    3. daily/YYYY-MM-DD.csv (當日封存快照)
+    將資料庫持股與淨值資料匯出為 CSV 報表：
+    1. data/etf_holdings_latest.csv (最新持股)
+    2. data/etf_holdings_all_history.csv (全歷史持股)
+    3. data/etf_navs_history.csv (每日淨值歷史)
+    4. data/daily/YYYY-MM-DD.csv (當日持股快照)
     """
     os.makedirs(output_dir, exist_ok=True)
     daily_dir = os.path.join(output_dir, "daily")
@@ -119,8 +152,8 @@ def export_csv(output_dir: str = "data"):
 
     engine, _ = init_db()
 
-    # 1. 匯出全歷史紀錄
-    query_all = """
+    # 1. 匯出持股歷史總表
+    query_holdings = """
     SELECT 
         f.etf_code,
         f.name AS etf_name,
@@ -135,11 +168,11 @@ def export_csv(output_dir: str = "data"):
     JOIN etf_funds f ON h.etf_code = f.etf_code
     ORDER BY f.etf_code, h.record_date DESC, h.weight DESC
     """
-    df_all = pd.read_sql(query_all, engine)
+    df_all = pd.read_sql(query_holdings, engine)
     all_csv_path = os.path.join(output_dir, "etf_holdings_all_history.csv")
     df_all.to_csv(all_csv_path, index=False, encoding="utf-8-sig")
 
-    # 2. 匯出最新單日快照
+    # 2. 匯出持股最新單日快照
     subq_latest = """
     SELECT h.*, f.name AS etf_name, f.issuer, f.category
     FROM etf_holdings h
@@ -160,9 +193,27 @@ def export_csv(output_dir: str = "data"):
     daily_csv_path = os.path.join(daily_dir, f"{today_str}.csv")
     df_latest.to_csv(daily_csv_path, index=False, encoding="utf-8-sig")
 
-    print(f"[OK] 歷史總表匯出完成 ({len(df_all)} 筆): {all_csv_path}")
-    print(f"[OK] 最新快照匯出完成 ({len(df_latest)} 筆): {latest_csv_path}")
-    print(f"[OK] 今日快照封存完成: {daily_csv_path}")
+    # 4. 匯出每日淨值歷史表
+    query_navs = """
+    SELECT 
+        f.etf_code,
+        f.name AS etf_name,
+        n.record_date,
+        n.nav,
+        n.close_price,
+        n.premium_discount_pct,
+        n.prev_nav
+    FROM etf_navs n
+    JOIN etf_funds f ON n.etf_code = f.etf_code
+    ORDER BY f.etf_code, n.record_date DESC
+    """
+    df_navs = pd.read_sql(query_navs, engine)
+    nav_csv_path = os.path.join(output_dir, "etf_navs_history.csv")
+    df_navs.to_csv(nav_csv_path, index=False, encoding="utf-8-sig")
+
+    print(f"[OK] 持股歷史總表匯出完成 ({len(df_all)} 筆): {all_csv_path}")
+    print(f"[OK] 最新持股快照匯出完成 ({len(df_latest)} 筆): {latest_csv_path}")
+    print(f"[OK] 每日淨值歷史匯出完成 ({len(df_navs)} 筆): {nav_csv_path}")
 
 
 def list_funds():
@@ -173,11 +224,16 @@ def list_funds():
             print("資料庫內目前尚無 ETF 資料，請先執行抓取命令 (例如: python main.py fetch 0050 00878)")
             return
 
-        print(f"\n{'代號':<8} {'名稱':<22} {'投信發行商':<12} {'類別':<14} {'歷史紀錄數':<8}")
-        print("-" * 72)
+        print(f"\n{'代號':<8} {'名稱':<22} {'發行商':<10} {'最新淨值':<10} {'市價':<8} {'折溢價':<8} {'持股數':<6}")
+        print("-" * 80)
+        repo = ETFRepository(session)
         for f in funds:
             holdings_count = len(f.holdings) if f.holdings else 0
-            print(f"{f.etf_code:<8} {f.name:<22} {f.issuer:<12} {f.category:<14} {holdings_count:<8}")
+            latest_nav = repo.get_latest_nav(f.etf_code)
+            nav_str = f"{latest_nav.nav:.2f}" if latest_nav else "N/A"
+            price_str = f"{latest_nav.close_price:.2f}" if (latest_nav and latest_nav.close_price) else "N/A"
+            diff_str = f"{latest_nav.premium_discount_pct:+.2f}%" if (latest_nav and latest_nav.premium_discount_pct is not None) else "N/A"
+            print(f"{f.etf_code:<8} {f.name:<22} {f.issuer:<10} {nav_str:<10} {price_str:<8} {diff_str:<8} {holdings_count:<6}")
         print(f"\n目前資料庫累計已收錄: {len(funds)} 檔 ETF\n")
 
 
@@ -188,18 +244,18 @@ def show_holdings(etf_code: str, target_date_str: Optional[str] = None, top_n: i
     with SessionFactory() as session:
         repo = ETFRepository(session)
         holdings = repo.get_latest_holdings(etf_code, target_d)
-        if not holdings:
-            print(f"查無 {etf_code} {'在 ' + target_date_str if target_date_str else ''} 的持股資料。")
-            return
-
         fund = session.query(ETFFund).filter_by(etf_code=etf_code).first()
         fund_name = fund.name if fund else etf_code
         issuer = fund.issuer if fund else "未知"
-        record_date = holdings[0].record_date
+        latest_nav = repo.get_latest_nav(etf_code)
 
         print(f"\n=======================================================")
-        print(f" [{etf_code}] {fund_name} ({issuer}) - 持股明細")
-        print(f" 基準日: {record_date} | 總成分股: {len(holdings)} 檔 | 前 {min(top_n, len(holdings))} 大權重")
+        print(f" [{etf_code}] {fund_name} ({issuer})")
+        if latest_nav:
+            diff_sign = "+" if latest_nav.premium_discount_pct and latest_nav.premium_discount_pct > 0 else ""
+            diff_str = f"{diff_sign}{latest_nav.premium_discount_pct:.2f}%" if latest_nav.premium_discount_pct is not None else "N/A"
+            print(f" 淨值基準日: {latest_nav.record_date} | 每單位淨值: NT${latest_nav.nav:.2f} | 市價: NT${latest_nav.close_price or 0:.2f} | 折溢價: {diff_str}")
+        print(f" 總成分股: {len(holdings)} 檔 | 前 {min(top_n, len(holdings))} 大權重配置")
         print(f"=======================================================")
         print(f"{'排名':<6} {'代號/名稱':<18} {'持股比例(%)':<12} {'持有股數':<15}")
         print("-" * 55)
@@ -210,10 +266,35 @@ def show_holdings(etf_code: str, target_date_str: Optional[str] = None, top_n: i
         print()
 
 
+def show_nav_history(etf_code: str, limit: int = 30):
+    """
+    顯示某檔 ETF 的歷史每日淨值、市價與折溢價紀錄
+    """
+    engine, SessionFactory = init_db()
+    with SessionFactory() as session:
+        repo = ETFRepository(session)
+        navs = repo.get_nav_history(etf_code, limit)
+        if not navs:
+            print(f"查無 {etf_code} 的淨值紀錄。您可以先執行: python main.py fetch-nav")
+            return
+
+        fund = session.query(ETFFund).filter_by(etf_code=etf_code).first()
+        fund_name = fund.name if fund else etf_code
+
+        print(f"\n=======================================================")
+        print(f" [{etf_code}] {fund_name} - 歷史每日淨值與折溢價紀錄 (近 {len(navs)} 筆)")
+        print(f"=======================================================")
+        print(f"{'日期':<14} {'每單位淨值(NAV)':<16} {'收盤市價':<12} {'折溢價率(%)':<12} {'前日淨值':<12}")
+        print("-" * 66)
+        for n in navs:
+            diff_str = f"{n.premium_discount_pct:+.2f}%" if n.premium_discount_pct is not None else "N/A"
+            price_str = f"{n.close_price:.2f}" if n.close_price else "N/A"
+            prev_str = f"{n.prev_nav:.2f}" if n.prev_nav else "N/A"
+            print(f"{n.record_date.strftime('%Y-%m-%d'):<14} NT${n.nav:>8.2f}        NT${price_str:>7}      {diff_str:>10}     NT${prev_str:>7}")
+        print()
+
+
 def show_stock_history(etf_code: str, stock_name: str):
-    """
-    顯示某檔成分股在特定 ETF 的歷史權重與股數變化走勢
-    """
     engine, SessionFactory = init_db()
     with SessionFactory() as session:
         repo = ETFRepository(session)
@@ -234,9 +315,6 @@ def show_stock_history(etf_code: str, stock_name: str):
 
 
 def show_diff(etf_code: str, date1_str: str, date2_str: str):
-    """
-    比對兩日期的成分股增減與換股分析
-    """
     d1 = datetime.strptime(date1_str, "%Y-%m-%d").date()
     d2 = datetime.strptime(date2_str, "%Y-%m-%d").date()
 
@@ -276,7 +354,7 @@ def list_dates(etf_code: str):
         if not dates:
             print(f"資料庫查無 {etf_code} 的歷史紀錄。")
             return
-        print(f"\n[{etf_code}] 資料庫現有歷史基準日 ({len(dates)} 天):")
+        print(f"\n[{etf_code}] 資料庫現有持股基準日 ({len(dates)} 天):")
         for d in dates:
             print(f"  - {d.strftime('%Y-%m-%d')}")
         print()
@@ -302,38 +380,47 @@ def search_stock(keyword: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="台灣投信 ETF 持股明細抓取與歷史資料庫管理系統")
+    parser = argparse.ArgumentParser(description="台灣投信 ETF 持股明細與每日淨值歷史資料庫系統")
     subparsers = parser.add_subparsers(dest="command", help="操作子命令")
 
     # fetch 命令
-    fetch_parser = subparsers.add_parser("fetch", help="抓取指定 ETF 並存入資料庫")
+    fetch_parser = subparsers.add_parser("fetch", help="抓取指定 ETF 持股並同步每日淨值")
     fetch_parser.add_argument("codes", nargs="+", help="ETF 代號 (如 0050 00878 00919 0056)")
+
+    # fetch-nav 命令
+    nav_parser = subparsers.add_parser("fetch-nav", help="專門更新全市場 360+ 檔 ETF 每日淨值與折溢價")
+    nav_parser.add_argument("codes", nargs="*", default=None, help="指定代號 (留空則更新全市場)")
 
     # fetch-all 命令
     fetchall_parser = subparsers.add_parser("fetch-all", help="從證交所自動獲取清單並批次抓取全體 ETF")
     fetchall_parser.add_argument("--limit", type=int, default=None, help="限制抓取前 N 檔")
     fetchall_parser.add_argument("--delay", type=float, default=1.0, help="每檔抓取間隔秒數")
 
+    # nav 命令 (查看歷史淨值)
+    nav_show_parser = subparsers.add_parser("nav", help="查看某檔 ETF 的每日淨值、市價與折溢價走勢")
+    nav_show_parser.add_argument("code", help="ETF 代號 (如 0050 或 00878)")
+    nav_show_parser.add_argument("--limit", type=int, default=30, help="顯示近 N 筆淨值 (預設 30)")
+
     # export 命令
-    export_parser = subparsers.add_parser("export", help="將資料庫全歷史與最新持股匯出為 CSV")
+    export_parser = subparsers.add_parser("export", help="將持股與每日淨值歷史匯出為 CSV")
     export_parser.add_argument("--dir", default="data", help="輸出資料夾 (預設 data)")
 
     # list 命令
-    subparsers.add_parser("list", help="列出資料庫現存所有 ETF")
+    subparsers.add_parser("list", help="列出資料庫現存所有 ETF 與最新淨值")
 
     # show 命令
-    show_parser = subparsers.add_parser("show", help="檢視某檔 ETF 的成分股權重")
+    show_parser = subparsers.add_parser("show", help="檢視某檔 ETF 的淨值與成分股權重")
     show_parser.add_argument("code", help="ETF 代號 (如 00878)")
-    show_parser.add_argument("--date", default=None, help="指定查詢特定歷史日期 (YYYY-MM-DD)")
+    show_parser.add_argument("--date", default=None, help="指定查詢特定歷史日期")
     show_parser.add_argument("--top", type=int, default=20, help="顯示前 N 大持股")
 
     # history 命令
     hist_parser = subparsers.add_parser("history", help="查詢某檔成分股在特定 ETF 的歷史權重軌跡")
     hist_parser.add_argument("code", help="ETF 代號 (如 00878)")
-    hist_parser.add_argument("stock", help="成分股名稱 (如 廣達 或 聯發科)")
+    hist_parser.add_argument("stock", help="成分股名稱 (如 廣達)")
 
     # diff 命令
-    diff_parser = subparsers.add_parser("diff", help="比對兩日期的成分股增減與換股分析")
+    diff_parser = subparsers.add_parser("diff", help="比對兩日期的成分股換股分析")
     diff_parser.add_argument("code", help="ETF 代號 (如 00878)")
     diff_parser.add_argument("date1", help="舊日期 (YYYY-MM-DD)")
     diff_parser.add_argument("date2", help="新日期 (YYYY-MM-DD)")
@@ -344,14 +431,18 @@ def main():
 
     # search 命令
     search_parser = subparsers.add_parser("search", help="跨 ETF 搜尋某檔個股的權重配置")
-    search_parser.add_argument("keyword", help="股票名稱或代號 (如 台積電 或 聯發科)")
+    search_parser.add_argument("keyword", help="股票名稱或代號 (如 台積電)")
 
     args = parser.parse_args()
 
     if args.command == "fetch":
         fetch_and_save(args.codes)
+    elif args.command == "fetch-nav":
+        fetch_and_save_navs(args.codes if args.codes else None)
     elif args.command == "fetch-all":
         fetch_all_batch(limit=args.limit, delay=args.delay)
+    elif args.command == "nav":
+        show_nav_history(args.code, args.limit)
     elif args.command == "export":
         export_csv(args.dir)
     elif args.command == "list":
@@ -367,14 +458,10 @@ def main():
     elif args.command == "search":
         search_stock(args.keyword)
     else:
-        print("未指定子命令，可用命令:")
-        print("  python main.py fetch <代號...>              抓取指定 ETF")
-        print("  python main.py show <代號> [--date YYYY-MM-DD] 檢視指定歷史日期的持股")
-        print("  python main.py dates <代號>                 查看該 ETF 累積了哪些歷史日期")
-        print("  python main.py history <ETF代號> <個股>      查詢某檔個股在此 ETF 的歷史權重走勢")
-        print("  python main.py diff <ETF代號> <日期1> <日期2> 換股分析（比對兩日期的增減與新增/剔除）")
-        print("  python main.py search <個股>                 跨 ETF 搜尋個股分布")
-        print("  python main.py export                       匯出最新與全歷史 CSV 報表")
+        print("未指定子命令，請使用 -h 查看說明。常用命令:")
+        print("  python main.py fetch-nav          更新全市場 360+ 檔 ETF 每日淨值與折溢價")
+        print("  python main.py nav <代號>         查看該 ETF 歷史每日淨值與折溢價")
+        print("  python main.py show <代號>        查看該 ETF 最新每單位淨值與成分股明細")
 
 
 if __name__ == "__main__":

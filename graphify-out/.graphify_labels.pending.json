@@ -1,7 +1,10 @@
 {
   "0": "steps",
   "1": "target_mode",
-  "2": "True",
-  "3": "update_etf.yml",
-  "4": "update-holdings"
+  "2": "main",
+  "3": "ETFRepository",
+  "4": "main.py",
+  "5": "repository.py",
+  "6": "export_csv",
+  "7": "fetch_all_twse_etf_codes"
 }

@@ -3,8 +3,9 @@ from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, asc
 
-from .models import ETFFund, ETFHolding
+from .models import ETFFund, ETFHolding, ETFNav
 from collectors.base import ETFPayload
+from collectors.twse_nav import NavItem
 
 
 class ETFRepository:
@@ -30,7 +31,7 @@ class ETFRepository:
             fund.name = payload.etf_name
             fund.issuer = payload.issuer
 
-        # 只刪除「當天、該 ETF」的既有紀錄，其他歷史日期的資料永遠保留！
+        # 只刪除「當天、該 ETF」的既有持股紀錄，歷史日期的資料永遠保留
         self.session.query(ETFHolding).filter(
             ETFHolding.etf_code == payload.etf_code,
             ETFHolding.record_date == payload.record_date,
@@ -53,9 +54,81 @@ class ETFRepository:
         self.session.commit()
         return saved_count
 
+    def save_navs_batch(self, nav_items: List[NavItem]) -> int:
+        """
+        批次儲存或更新 ETF 每日淨值紀錄 (Upsert)
+        不同日期的淨值永久保留累加，同一天重複抓取會更新
+        """
+        saved = 0
+        for item in nav_items:
+            # 確保 ETF 基本主檔存在
+            fund = self.session.query(ETFFund).filter_by(etf_code=item.etf_code).first()
+            if not fund:
+                fund = ETFFund(
+                    etf_code=item.etf_code,
+                    name=item.etf_name or f"ETF-{item.etf_code}",
+                    issuer="國內投信",
+                )
+                self.session.add(fund)
+                self.session.flush()
+
+            # 查詢當日是否已有淨值紀錄
+            nav_record = (
+                self.session.query(ETFNav)
+                .filter(
+                    ETFNav.etf_code == item.etf_code,
+                    ETFNav.record_date == item.record_date
+                )
+                .first()
+            )
+
+            if not nav_record:
+                nav_record = ETFNav(
+                    etf_code=item.etf_code,
+                    record_date=item.record_date,
+                    nav=item.nav,
+                    close_price=item.close_price,
+                    premium_discount_pct=item.premium_discount_pct,
+                    prev_nav=item.prev_nav,
+                )
+                self.session.add(nav_record)
+            else:
+                nav_record.nav = item.nav
+                nav_record.close_price = item.close_price
+                nav_record.premium_discount_pct = item.premium_discount_pct
+                nav_record.prev_nav = item.prev_nav
+
+            saved += 1
+
+        self.session.commit()
+        return saved
+
+    def get_latest_nav(self, etf_code: str) -> Optional[ETFNav]:
+        """
+        取得某檔 ETF 最新的淨值與折溢價紀錄
+        """
+        return (
+            self.session.query(ETFNav)
+            .filter(ETFNav.etf_code == etf_code)
+            .order_by(desc(ETFNav.record_date))
+            .first()
+        )
+
+    def get_nav_history(self, etf_code: str, limit: int = 30) -> List[ETFNav]:
+        """
+        取得某檔 ETF 歷史淨值與市價走勢清單
+        """
+        return (
+            self.session.query(ETFNav)
+            .filter(ETFNav.etf_code == etf_code)
+            .order_by(desc(ETFNav.record_date))
+            .limit(limit)
+            .all()
+        )
+
     def get_available_dates(self, etf_code: str) -> List[date]:
         """
-        取得特定 ETF 在資料庫中存在哪些歷史日期
+        取得特定 ETF 在資料庫中存在哪些持股歷史日期
         """
         dates = (
             self.session.query(ETFHolding.record_date)
@@ -145,7 +218,6 @@ class ETFRepository:
             elif old_h and not new_h:
                 removed.append({"stock_name": stock, "weight": old_h.weight})
 
-        # 排序權重變動
         diffs.sort(key=lambda x: abs(x["diff"]), reverse=True)
         return {
             "diffs": diffs,
