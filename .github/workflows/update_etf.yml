@@ -1,0 +1,77 @@
+name: 自動更新台股 ETF 持股明細與資料庫
+
+on:
+  schedule:
+    # 台灣時間 (UTC+8) 週一至週五 18:30 執行 (UTC 10:30)
+    # 此時當日台股收盤，各大投信已完成當日 PCF / 持股明細揭露
+    - cron: '30 10 * * 1-5'
+  
+  # 支援在 GitHub 網頁上手動點擊 "Run workflow" 隨時執行
+  workflow_dispatch:
+    inputs:
+      target_mode:
+        description: '抓取模式'
+        required: true
+        default: 'popular'
+        type: choice
+        options:
+          - 'popular'   # 抓取常見核心 ETF (快速、穩定)
+          - 'all'       # 抓取全市場 240+ 檔 ETF
+
+permissions:
+  contents: write  # 允許 GitHub Actions 將更新後的資料庫與 CSV 推送回倉庫
+
+jobs:
+  update-holdings:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 檢出專案程式碼 (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 環境 (Python 3.12)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝相依套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 執行 ETF 持股明細更新
+        run: |
+          if [ "${{ github.event.inputs.target_mode }}" = "all" ]; then
+            echo "開始抓取全市場所有 ETF..."
+            python main.py fetch-all --delay 1.0
+          else
+            echo "抓取市場核心主流 ETF..."
+            python main.py fetch 0050 0056 00878 00919 00929 006208 00713 00939 00940 00692 0052 00915 00934 00936
+          fi
+
+      - name: 匯出最新 CSV 報表
+        run: |
+          python main.py export --dir data
+
+      - name: 顯示更新後成果摘要
+        run: |
+          python main.py list
+
+      - name: 自動 Commit 並 Push 回 GitHub 儲存庫
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 加入資料庫與匯出的 CSV 檔案
+          git add etf_data.db data/
+          
+          # 檢查是否有更動，有更動才 commit
+          if git diff --staged --quiet; then
+            echo "今日資料無變更，跳過 Commit。"
+          else
+            TODAY=$(date '+%Y-%m-%d')
+            git commit -m "chore(data): 自動更新 ETF 持股資料庫與 CSV [${TODAY}]"
+            git push
+          fi
+

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Playwright / Browsers
+.playwright/
+ms-playwright/
+
+# OS / IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
