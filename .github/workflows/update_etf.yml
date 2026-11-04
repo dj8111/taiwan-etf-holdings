@@ -3,23 +3,22 @@ name: 自動更新台股 ETF 持股明細與資料庫
 on:
   schedule:
     # 台灣時間 (UTC+8) 週一至週五 18:30 執行 (UTC 10:30)
-    # 此時當日台股收盤，各大投信已完成當日 PCF / 持股明細揭露
     - cron: '30 10 * * 1-5'
   
   # 支援在 GitHub 網頁上手動點擊 "Run workflow" 隨時執行
   workflow_dispatch:
     inputs:
       target_mode:
-        description: '抓取模式'
+        description: '抓取模式 (popular: 核心熱門款 / all: 全市場)'
         required: true
         default: 'popular'
         type: choice
         options:
-          - 'popular'   # 抓取常見核心 ETF (快速、穩定)
-          - 'all'       # 抓取全市場 240+ 檔 ETF
+          - 'popular'
+          - 'all'
 
 permissions:
-  contents: write  # 允許 GitHub Actions 將更新後的資料庫與 CSV 推送回倉庫
+  contents: write
 
 jobs:
   update-holdings:
@@ -42,7 +41,7 @@ jobs:
 
       - name: 執行 ETF 持股明細更新
         run: |
-          if [ "${{ github.event.inputs.target_mode }}" = "all" ]; then
+          if [ "${{ inputs.target_mode }}" = "all" ]; then
             echo "開始抓取全市場所有 ETF..."
             python main.py fetch-all --delay 1.0
           else
@@ -63,10 +62,8 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 加入資料庫與匯出的 CSV 檔案
           git add etf_data.db data/
           
-          # 檢查是否有更動，有更動才 commit
           if git diff --staged --quiet; then
             echo "今日資料無變更，跳過 Commit。"
           else
@@ -74,4 +71,3 @@ jobs:
             git commit -m "chore(data): 自動更新 ETF 持股資料庫與 CSV [${TODAY}]"
             git push
           fi
-
