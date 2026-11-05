@@ -24,3 +24,7 @@ ms-playwright/
 .DS_Store
 Thumbs.db
 
+# Analysis / Tools
+graphify-out/
+
+

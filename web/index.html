@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台灣股市 ETF 智慧儀表板 | 持股明細與淨值現值走勢</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            },
+            dark: {
+              bg: '#0b0f19',
+              card: '#111827',
+              border: '#1f2937',
+              hover: '#1e293b'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- ECharts -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    /* 自訂滾動條 */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-dark-bg text-slate-100 min-h-screen font-sans antialiased selection:bg-sky-500 selection:text-white">
+  <div id="app" v-cloak class="min-h-screen flex flex-col">
+    
+    <!-- 頂部導航列 Header -->
+    <header class="border-b border-dark-border bg-dark-card/90 backdrop-blur-md sticky top-0 z-30 shadow-md">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        
+        <!-- Logo & 標題 -->
+        <div class="flex items-center gap-3 cursor-pointer" @click="switchTab('analysis'); selectETF('00878');">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-sky-500/20">
+            <i class="fa-solid fa-chart-line text-lg"></i>
+          </div>
+          <div>
+            <h1 class="font-bold text-base sm:text-lg leading-tight bg-gradient-to-r from-white via-slate-200 to-sky-400 bg-clip-text text-transparent">
+              台股 ETF 智慧查詢系統
+            </h1>
+            <div class="text-[11px] text-slate-400 flex items-center gap-2">
+              <span>全市場 364 檔 ETF 每日即時採集</span>
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 導航分頁 Tabs (常駐顯示、明確反饋) -->
+        <nav class="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-dark-border text-xs sm:text-sm">
+          <button 
+            type="button"
+            @click="switchTab('analysis')"
+            :class="activeTab === 'analysis' ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'"
+            class="px-3 sm:px-4 py-1.5 rounded-lg transition-all flex items-center gap-2 cursor-pointer">
+            <i class="fa-solid fa-chart-pie text-xs"></i> 
+            <span>ETF 深度分析</span>
+          </button>
+          
+          <button 
+            type="button"
+            @click="switchTab('diff')"
+            :class="activeTab === 'diff' ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'"
+            class="px-3 sm:px-4 py-1.5 rounded-lg transition-all flex items-center gap-2 cursor-pointer">
+            <i class="fa-solid fa-arrows-split-up-and-left text-xs"></i> 
+            <span>換股比對 (Diff)</span>
+          </button>
+          
+          <button 
+            type="button"
+            @click="switchTab('stock_tracker')"
+            :class="activeTab === 'stock_tracker' ? 'bg-sky-600 text-white font-bold shadow-md shadow-sky-600/30' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'"
+            class="px-3 sm:px-4 py-1.5 rounded-lg transition-all flex items-center gap-2 cursor-pointer">
+            <i class="fa-solid fa-crosshairs text-xs"></i> 
+            <span>跨 ETF 追蹤個股</span>
+          </button>
+        </nav>
+
+        <!-- 即時搜尋與 GitHub 狀態 -->
+        <div class="flex items-center gap-2.5">
+          <!-- 智慧搜尋下拉框 -->
+          <div class="relative w-44 sm:w-56" @click.stop>
+            <div class="relative">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+              <input 
+                type="text" 
+                v-model="searchKeyword" 
+                @focus="showSearchDropdown = true"
+                @keyup.esc="showSearchDropdown = false"
+                placeholder="搜尋代號或名稱 (如 0050)..."
+                class="w-full bg-slate-900 border border-dark-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition">
+            </div>
+
+            <!-- 搜尋建議浮動清單 -->
+            <div 
+              v-show="showSearchDropdown && filteredEtfs.length > 0"
+              class="absolute left-0 right-0 mt-1 max-h-72 overflow-y-auto bg-slate-900 border border-dark-border rounded-xl shadow-2xl z-50 divide-y divide-slate-800">
+              <div 
+                v-for="item in filteredEtfs.slice(0, 15)" 
+                :key="item.etf_code"
+                @click="onSelectSearchResult(item.etf_code)"
+                class="px-3 py-2 text-xs hover:bg-slate-800 cursor-pointer flex items-center justify-between">
+                <div>
+                  <span class="font-bold text-sky-400 mr-2">{{ item.etf_code }}</span>
+                  <span class="text-slate-200">{{ item.name }}</span>
+                </div>
+                <div class="text-[10px] text-slate-400 shrink-0">
+                  <span v-if="item.nav" class="font-mono text-emerald-400">${{ item.nav.toFixed(2) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- GitHub 儲存庫按鈕 -->
+          <a 
+            href="https://github.com/dj8111/taiwan-etf-holdings" 
+            target="_blank"
+            title="造訪 GitHub 專案儲存庫"
+            class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-dark-border text-slate-300 rounded-lg text-xs flex items-center gap-1.5 transition">
+            <i class="fa-brands fa-github text-sm"></i>
+            <span class="hidden sm:inline">GitHub</span>
+          </a>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- 全域數據更新概況條 -->
+    <div class="bg-slate-900/60 border-b border-dark-border text-[11px] text-slate-400 py-1.5 px-4">
+      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-3">
+          <span><i class="fa-solid fa-database text-sky-400 mr-1"></i>資料庫總計: <strong class="text-slate-200">{{ stats.total_funds }}</strong> 檔 ETF</span>
+          <span><i class="fa-solid fa-list-check text-emerald-400 mr-1"></i>已入庫持股: <strong class="text-slate-200">{{ stats.funds_with_holdings }}</strong> 檔 (共 {{ stats.total_holdings_records }} 筆)</span>
+          <span><i class="fa-regular fa-clock text-amber-400 mr-1"></i>最新資料日: <strong class="text-slate-200">{{ stats.latest_nav_date || '即時' }}</strong></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button 
+            @click="loadStats" 
+            title="刷新資料庫統計"
+            class="hover:text-sky-400 transition flex items-center gap-1">
+            <i class="fa-solid fa-arrows-rotate text-[10px]"></i> 刷新狀態
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主要內容區 -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+
+      <!-- 熱門 ETF 快捷標籤列 -->
+      <div class="flex items-center gap-2 overflow-x-auto pb-1 text-xs text-slate-400 scrollbar-none">
+        <span class="shrink-0 font-medium text-slate-500"><i class="fa-solid fa-fire text-amber-500 mr-1"></i>熱門快選:</span>
+        <button 
+          v-for="code in hotEtfs" 
+          :key="code"
+          @click="selectETF(code)"
+          :class="currentCode === code ? 'bg-sky-500/20 text-sky-400 border-sky-500/40 font-bold' : 'bg-slate-900 border-dark-border hover:bg-slate-800 text-slate-300'"
+          class="px-2.5 py-1 rounded-md border shrink-0 transition cursor-pointer">
+          {{ code }}
+        </button>
+        <button 
+          @click="selectETF('00405A')"
+          :class="currentCode === '00405A' ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-bold' : 'bg-slate-900 border-dark-border hover:bg-slate-800 text-slate-300'"
+          class="px-2.5 py-1 rounded-md border shrink-0 transition cursor-pointer">
+          00405A (富邦龍耀)
+        </button>
+      </div>
+
+      <!-- ================= 頁籤 1: 📊 ETF 深度分析 ================= -->
+      <section v-show="activeTab === 'analysis'" class="space-y-6">
+
+        <!-- 頂部 ETF 概況卡片 -->
+        <div class="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <div class="absolute -right-10 -bottom-10 opacity-5 pointer-events-none text-9xl text-white">
+            <i class="fa-solid fa-chart-line"></i>
+          </div>
+
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <!-- ETF 基本抬頭 -->
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 flex-wrap">
+                <span class="text-3xl font-black text-sky-400 tracking-tight">{{ currentCode }}</span>
+                <h2 class="text-2xl font-bold text-white">{{ currentSummary?.name || '載入中...' }}</h2>
+                <span class="bg-slate-800 border border-slate-700 text-slate-300 px-2.5 py-0.5 rounded-full text-xs">
+                  {{ currentSummary?.issuer || '國內投信' }}
+                </span>
+                <span class="bg-slate-800/80 border border-slate-700 text-slate-400 px-2.5 py-0.5 rounded-full text-xs">
+                  {{ currentSummary?.category || '國內股票型' }}
+                </span>
+              </div>
+              <div class="text-xs text-slate-400 flex items-center gap-4 flex-wrap">
+                <span><i class="fa-regular fa-clock mr-1 text-slate-500"></i>最新淨值日期: <strong class="text-slate-200">{{ currentSummary?.latest_nav?.record_date || '暫無' }}</strong></span>
+                <span><i class="fa-solid fa-layer-group mr-1 text-slate-500"></i>成分股總數: <strong class="text-slate-200">{{ currentSummary?.holdings_summary?.count || 0 }} 檔</strong></span>
+                <span><i class="fa-solid fa-calendar-check mr-1 text-slate-500"></i>持股紀錄歷史: <strong class="text-slate-200">{{ availableDates.length }} 天</strong></span>
+              </div>
+            </div>
+
+            <!-- KPI 數據膠囊指標 -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 shrink-0">
+              <!-- 最新淨值 (NAV) -->
+              <div class="bg-slate-900/90 border border-dark-border rounded-xl p-3.5 flex flex-col justify-between">
+                <span class="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                  每單位淨值 (NAV)
+                  <i class="fa-solid fa-scale-balanced text-sky-400 text-xs"></i>
+                </span>
+                <div class="text-2xl font-black text-white mt-1">
+                  ${{ currentSummary?.latest_nav?.nav ? currentSummary.latest_nav.nav.toFixed(2) : '--' }}
+                </div>
+                <div class="text-[10px] text-slate-400 mt-0.5">
+                  前日淨值: ${{ currentSummary?.latest_nav?.prev_nav ? currentSummary.latest_nav.prev_nav.toFixed(2) : '--' }}
+                </div>
+              </div>
+
+              <!-- 最新市價 / 現值 (Close Price) -->
+              <div class="bg-slate-900/90 border border-dark-border rounded-xl p-3.5 flex flex-col justify-between">
+                <span class="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                  現值 / 市價 (Price)
+                  <i class="fa-solid fa-tag text-amber-400 text-xs"></i>
+                </span>
+                <div class="text-2xl font-black text-amber-400 mt-1">
+                  ${{ currentSummary?.latest_nav?.close_price ? currentSummary.latest_nav.close_price.toFixed(2) : '--' }}
+                </div>
+                <div class="text-[10px] text-slate-400 mt-0.5">
+                  價差: {{ getPriceDiff() }}
+                </div>
+              </div>
+
+              <!-- 折溢價率 -->
+              <div class="bg-slate-900/90 border border-dark-border rounded-xl p-3.5 flex flex-col justify-between col-span-2 sm:col-span-1">
+                <span class="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                  折溢價率 (%)
+                  <i class="fa-solid fa-percent text-xs" :class="isPremium() ? 'text-red-400' : 'text-emerald-400'"></i>
+                </span>
+                <div class="text-2xl font-black mt-1 flex items-baseline gap-1.5"
+                  :class="isPremium() ? 'text-red-400' : 'text-emerald-400'">
+                  {{ formatPremium(currentSummary?.latest_nav?.premium_discount_pct) }}
+                  <span class="text-xs font-semibold px-1.5 py-0.5 rounded"
+                    :class="isPremium() ? 'bg-red-500/20 text-red-300' : 'bg-emerald-500/20 text-emerald-300'">
+                    {{ isPremium() ? '溢價' : '折價' }}
+                  </span>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-0.5">
+                  市價相對淨值偏離
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 走勢圖與成分股圓餅圖區塊 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          <!-- 左側：淨值 vs 現值 走勢圖 (佔 2 欄) -->
+          <div class="lg:col-span-2 bg-dark-card border border-dark-border rounded-2xl p-5 shadow-xl flex flex-col">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></div>
+                <h3 class="font-bold text-sm text-slate-200">歷史淨值 (NAV) 與現值走勢圖</h3>
+              </div>
+              <!-- 天數篩選按鈕 -->
+              <div class="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-dark-border text-xs">
+                <button 
+                  v-for="days in [7, 30, 90, 180, 365]" 
+                  :key="days"
+                  @click="changeChartDays(days)"
+                  :class="chartDays === days ? 'bg-sky-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'"
+                  class="px-2.5 py-1 rounded transition cursor-pointer">
+                  {{ days === 365 ? '全部' : days + '天' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- ECharts 容器 -->
+            <div id="navChart" class="w-full h-[360px] relative">
+              <div v-if="loadingNavs" class="absolute inset-0 flex items-center justify-center bg-dark-card/60 backdrop-blur-sm z-10">
+                <i class="fa-solid fa-spinner fa-spin text-2xl text-sky-400"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右側：Top 10 成分股權重分佈圓餅圖 (佔 1 欄) -->
+          <div class="bg-dark-card border border-dark-border rounded-2xl p-5 shadow-xl flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-sm text-slate-200 flex items-center gap-2">
+                <i class="fa-solid fa-pie-chart text-sky-400"></i>
+                Top 10 成分股權重
+              </h3>
+              <span class="text-[11px] text-slate-400">{{ selectedHoldingDate || '最新' }}</span>
+            </div>
+            <!-- ECharts 圓餅圖容器 -->
+            <div id="pieChart" class="w-full h-[360px] relative">
+              <div v-if="loadingHoldings" class="absolute inset-0 flex items-center justify-center bg-dark-card/60 backdrop-blur-sm z-10">
+                <i class="fa-solid fa-spinner fa-spin text-2xl text-sky-400"></i>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 歷史與目前成分股明細數據表 -->
+        <div class="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-xl space-y-4">
+          
+          <!-- 頂部標題與狀態資訊條 -->
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-dark-border pb-4">
+            
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2.5 flex-wrap">
+                <h3 class="font-bold text-base text-slate-100 flex items-center gap-2">
+                  <i class="fa-solid fa-list-check text-sky-400"></i>
+                  成分股持股明細與股數
+                </h3>
+                
+                <!-- 狀態 Badge -->
+                <span 
+                  v-if="holdingsMeta.is_latest"
+                  class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  目前最新持股明細
+                </span>
+                <span 
+                  v-else
+                  class="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1.5">
+                  <i class="fa-solid fa-clock-rotate-left text-[10px]"></i>
+                  歷史持股封存明細
+                </span>
+              </div>
+
+              <!-- 基準日期與上次更新日期說明條 -->
+              <div class="text-xs text-slate-400 flex items-center gap-4 flex-wrap">
+                <!-- 本期更新日期 -->
+                <span class="text-slate-300">
+                  <i class="fa-regular fa-calendar-check mr-1 text-sky-400"></i>
+                  {{ holdingsMeta.is_latest ? '最新更新日期' : '當期歷史基準日' }}: 
+                  <strong class="text-white font-mono text-sm underline decoration-sky-500 underline-offset-4">{{ holdingsMeta.record_date || selectedHoldingDate || '--' }}</strong>
+                </span>
+
+                <!-- 上次更新日期 -->
+                <span v-if="holdingsMeta.previous_date" class="text-slate-400 flex items-center gap-1">
+                  <i class="fa-solid fa-backward-step text-slate-500"></i>
+                  上次更新日期: 
+                  <strong class="text-slate-200 font-mono">{{ holdingsMeta.previous_date }}</strong>
+                  <button 
+                    @click="selectedHoldingDate = holdingsMeta.previous_date; loadHoldings();"
+                    class="ml-1 text-[11px] text-sky-400 hover:text-sky-300 hover:underline cursor-pointer">
+                    [切換至上次]
+                  </button>
+                </span>
+                <span v-else-if="availableDates.length <= 1" class="text-slate-500">
+                  (目前為起點首筆持股，無更早歷史資料)
+                </span>
+
+                <!-- 統計資訊 -->
+                <span class="text-slate-400">
+                  共 <strong class="text-slate-200">{{ holdingsMeta.total_count || filteredHoldings.length }}</strong> 檔成分股 · 
+                  權重合計 <strong class="text-slate-200">{{ holdingsMeta.total_weight ? holdingsMeta.total_weight + '%' : '--' }}</strong>
+                </span>
+              </div>
+            </div>
+
+            <!-- 工具列：歷史日期切換選單 + 返回最新按鈕 + 成分股過濾 -->
+            <div class="flex items-center gap-2.5 flex-wrap">
+              
+              <!-- 若不是最新，顯示「返回最新」按鈕 -->
+              <button 
+                v-if="!holdingsMeta.is_latest && holdingsMeta.latest_date"
+                @click="switchToLatest"
+                class="px-3 py-1.5 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer">
+                <i class="fa-solid fa-arrow-rotate-right text-[11px]"></i>
+                返回最新 ({{ holdingsMeta.latest_date }})
+              </button>
+
+              <!-- 歷史日期切換選單 -->
+              <div class="flex items-center gap-2 bg-slate-900 border border-dark-border px-3 py-1.5 rounded-xl text-xs">
+                <i class="fa-regular fa-calendar text-sky-400"></i>
+                <label class="text-slate-400 shrink-0">切換基準日:</label>
+                <select 
+                  v-model="selectedHoldingDate" 
+                  @change="loadHoldings"
+                  class="bg-transparent text-slate-200 font-medium focus:outline-none cursor-pointer">
+                  <option 
+                    v-for="(d, idx) in availableDates" 
+                    :key="d" 
+                    :value="d" 
+                    class="bg-slate-900 text-slate-200">
+                    {{ d }}{{ idx === 0 ? ' (最新)' : (idx === 1 ? ' (上次更新)' : '') }}
+                  </option>
+                </select>
+              </div>
+
+              <!-- 表格搜尋 -->
+              <div class="relative">
+                <i class="fa-solid fa-filter absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+                <input 
+                  type="text" 
+                  v-model="holdingFilter"
+                  placeholder="篩選代號或股名..."
+                  class="bg-slate-900 border border-dark-border rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-36 sm:w-44">
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 歷史檢視通知條 (當切換到非最新時醒目提示) -->
+          <div 
+            v-if="!holdingsMeta.is_latest" 
+            class="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+              <span>您目前正在檢視 <strong>{{ holdingsMeta.record_date }}</strong> 之歷史成分股封存資料，非目前最新持股。</span>
+            </div>
+            <button 
+              @click="switchToLatest"
+              class="text-amber-200 hover:text-white font-bold underline cursor-pointer shrink-0">
+              立即回到最新持股 →
+            </button>
+          </div>
+
+          <!-- 明細表格 -->
+          <div class="overflow-x-auto rounded-xl border border-dark-border">
+            <table class="w-full text-left text-xs border-collapse">
+              <thead class="bg-slate-900/90 text-slate-400 font-medium border-b border-dark-border">
+                <tr>
+                  <th class="py-3 px-4 w-12 text-center">#</th>
+                  <th class="py-3 px-4">股票代號</th>
+                  <th class="py-3 px-4">股票名稱</th>
+                  <th class="py-3 px-4 min-w-[200px]">持股比例 (權重 %)</th>
+                  <th class="py-3 px-4 text-right">持有股數</th>
+                  <th class="py-3 px-4 text-right">持股市值 (NTD)</th>
+                  <th class="py-3 px-4 text-center">歷史軌跡</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-dark-border font-mono">
+                <tr v-if="filteredHoldings.length === 0">
+                  <td colspan="7" class="py-8 text-center text-slate-500">
+                    <i class="fa-solid fa-folder-open text-2xl mb-2 block"></i>
+                    暫無持股明細資料（可執行 python main.py fetch {{ currentCode }} 抓取）
+                  </td>
+                </tr>
+                <tr 
+                  v-for="(item, index) in filteredHoldings" 
+                  :key="item.stock_code"
+                  class="hover:bg-slate-800/60 transition group cursor-pointer"
+                  @click="openStockHistoryModal(item.stock_name)">
+                  <td class="py-3 px-4 text-center text-slate-500 font-sans font-medium">{{ index + 1 }}</td>
+                  <td class="py-3 px-4 font-bold text-sky-400">{{ item.stock_code }}</td>
+                  <td class="py-3 px-4 text-slate-200 font-sans font-bold group-hover:text-white flex items-center gap-1.5">
+                    {{ item.stock_name }}
+                    <i class="fa-solid fa-chart-line text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition"></i>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex items-center gap-2">
+                      <span class="w-12 text-right font-bold text-slate-100">{{ item.weight.toFixed(2) }}%</span>
+                      <div class="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden max-w-[140px]">
+                        <div 
+                          class="bg-gradient-to-r from-sky-500 to-indigo-500 h-full rounded-full" 
+                          :style="{ width: Math.min(item.weight * 2, 100) + '%' }"></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 text-right text-slate-300">
+                    {{ item.shares ? Number(item.shares).toLocaleString() : '--' }}
+                  </td>
+                  <td class="py-3 px-4 text-right text-slate-400">
+                    {{ item.market_value ? '$' + Number(item.market_value).toLocaleString() : '--' }}
+                  </td>
+                  <td class="py-3 px-4 text-center" @click.stop>
+                    <button 
+                      @click="openStockHistoryModal(item.stock_name)"
+                      class="px-2 py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 rounded border border-sky-500/30 text-[11px] transition">
+                      <i class="fa-solid fa-arrow-trend-up mr-1"></i>歷史
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+
+      <!-- ================= 頁籤 2: 🔄 換股比對 (Diff 分析) ================= -->
+      <section v-show="activeTab === 'diff'" class="space-y-6">
+        
+        <div class="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-xl space-y-5">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                <i class="fa-solid fa-arrows-split-up-and-left text-sky-400"></i>
+                {{ currentCode }} - {{ currentSummary?.name }} 成分股換股分析比對 (Diff)
+              </h2>
+              <p class="text-xs text-slate-400 mt-1">
+                比對兩個歷史基準日之間的成分股調配，自動計算新進股、剔除股與權重增減。
+              </p>
+            </div>
+            <!-- 快速切換到有雙日期的 ETF -->
+            <div class="text-xs text-slate-400 flex items-center gap-2">
+              <span>嘗試具備多日期的 ETF:</span>
+              <button 
+                @click="selectETF('00900');"
+                class="px-2 py-1 bg-slate-900 border border-dark-border rounded text-sky-400 hover:text-white transition">
+                00900
+              </button>
+              <button 
+                @click="selectETF('00730');"
+                class="px-2 py-1 bg-slate-900 border border-dark-border rounded text-sky-400 hover:text-white transition">
+                00730
+              </button>
+            </div>
+          </div>
+
+          <!-- 日期選擇區 -->
+          <div class="flex flex-wrap items-center gap-4 bg-slate-900/90 border border-dark-border p-4 rounded-xl">
+            <div class="flex items-center gap-2 text-xs">
+              <label class="text-slate-400 font-medium">前期基準日 (舊):</label>
+              <select v-model="diffDateOld" class="bg-slate-800 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs focus:outline-none cursor-pointer">
+                <option v-for="d in availableDates" :key="'old-' + d" :value="d">{{ d }}</option>
+              </select>
+            </div>
+
+            <div class="text-slate-500 text-xs"><i class="fa-solid fa-arrow-right"></i></div>
+
+            <div class="flex items-center gap-2 text-xs">
+              <label class="text-slate-400 font-medium">後期基準日 (新):</label>
+              <select v-model="diffDateNew" class="bg-slate-800 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs focus:outline-none cursor-pointer">
+                <option v-for="d in availableDates" :key="'new-' + d" :value="d">{{ d }}</option>
+              </select>
+            </div>
+
+            <button 
+              type="button"
+              @click="runDiffAnalysis"
+              :disabled="loadingDiff"
+              class="px-5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-sky-600/30">
+              <i class="fa-solid fa-play" :class="{ 'fa-spin': loadingDiff }"></i>
+              執行比對分析
+            </button>
+          </div>
+
+          <!-- 提示訊息 -->
+          <div v-if="diffNotice" class="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-center gap-2">
+            <i class="fa-solid fa-circle-info text-amber-400"></i>
+            <span>{{ diffNotice }}</span>
+          </div>
+
+          <!-- 比對結果區 -->
+          <div v-if="diffResult" class="space-y-6 pt-2">
+            
+            <!-- 新納入與剔除卡片 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 新納入成分股 -->
+              <div class="bg-emerald-950/20 border border-emerald-500/30 rounded-xl p-4">
+                <h4 class="font-bold text-sm text-emerald-400 flex items-center justify-between">
+                  <span><i class="fa-solid fa-plus-circle mr-1.5"></i>新納入成分股</span>
+                  <span class="text-xs bg-emerald-500/20 px-2 py-0.5 rounded-full">{{ diffResult.added?.length || 0 }} 檔</span>
+                </h4>
+                <div v-if="diffResult.added?.length === 0" class="text-xs text-slate-500 py-4 text-center">
+                  無新納入成分股
+                </div>
+                <div v-else class="mt-3 space-y-2">
+                  <div 
+                    v-for="item in diffResult.added" 
+                    :key="item.stock_name"
+                    class="bg-slate-900/80 px-3 py-2 rounded-lg text-xs flex items-center justify-between border border-emerald-900/40">
+                    <span class="font-bold text-slate-200">{{ item.stock_name }}</span>
+                    <span class="font-mono text-emerald-400 font-bold">+{{ item.weight }}%</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 剔除成分股 -->
+              <div class="bg-red-950/20 border border-red-500/30 rounded-xl p-4">
+                <h4 class="font-bold text-sm text-red-400 flex items-center justify-between">
+                  <span><i class="fa-solid fa-minus-circle mr-1.5"></i>已剔除成分股</span>
+                  <span class="text-xs bg-red-500/20 px-2 py-0.5 rounded-full">{{ diffResult.removed?.length || 0 }} 檔</span>
+                </h4>
+                <div v-if="diffResult.removed?.length === 0" class="text-xs text-slate-500 py-4 text-center">
+                  無剔除成分股
+                </div>
+                <div v-else class="mt-3 space-y-2">
+                  <div 
+                    v-for="item in diffResult.removed" 
+                    :key="item.stock_name"
+                    class="bg-slate-900/80 px-3 py-2 rounded-lg text-xs flex items-center justify-between border border-red-900/40">
+                    <span class="font-bold text-slate-200">{{ item.stock_name }}</span>
+                    <span class="font-mono text-red-400 font-bold">-{{ item.weight }}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 成分股權重增減調配表 -->
+            <div class="border border-dark-border rounded-xl overflow-hidden">
+              <div class="bg-slate-900 px-4 py-3 font-bold text-xs text-slate-300 border-b border-dark-border flex items-center justify-between">
+                <span>成分股權重調整幅度排名 (共 {{ diffResult.diffs?.length || 0 }} 檔)</span>
+                <span class="text-[11px] text-slate-500">依變動絕對值排序</span>
+              </div>
+              <div class="max-h-96 overflow-y-auto">
+                <table class="w-full text-left text-xs border-collapse">
+                  <thead class="bg-slate-900/50 text-slate-400 sticky top-0 border-b border-dark-border">
+                    <tr>
+                      <th class="py-2.5 px-4">成分股名稱</th>
+                      <th class="py-2.5 px-4 text-right">舊權重 (%)</th>
+                      <th class="py-2.5 px-4 text-right">新權重 (%)</th>
+                      <th class="py-2.5 px-4 text-right">調配增減幅度</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-dark-border font-mono">
+                    <tr v-for="d in diffResult.diffs" :key="d.stock_name" class="hover:bg-slate-800/40">
+                      <td class="py-2.5 px-4 font-sans font-bold text-slate-200">{{ d.stock_name }}</td>
+                      <td class="py-2.5 px-4 text-right text-slate-400">{{ d.old_weight }}%</td>
+                      <td class="py-2.5 px-4 text-right text-slate-200 font-bold">{{ d.new_weight }}%</td>
+                      <td class="py-2.5 px-4 text-right font-bold" :class="d.diff >= 0 ? 'text-red-400' : 'text-emerald-400'">
+                        {{ d.diff >= 0 ? '+' : '' }}{{ d.diff }}%
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+
+          <div v-else-if="!diffResult && availableDates.length < 2" class="py-10 text-center text-slate-500 text-xs">
+            <i class="fa-solid fa-triangle-exclamation text-amber-500 text-2xl mb-2 block"></i>
+            目前「{{ currentCode }}」在資料庫中僅有 1 個日期的持股紀錄（{{ availableDates[0] || '無' }}）。<br>
+            每日排程更新後將累積新日期，屆時即可自由選取兩天進行換股對比！您也可以點擊上方「00900」或「00730」立即體驗比對。
+          </div>
+        </div>
+
+      </section>
+
+
+      <!-- ================= 頁籤 3: 🔍 跨 ETF 追蹤個股 ================= -->
+      <section v-show="activeTab === 'stock_tracker'" class="space-y-6">
+        
+        <div class="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-xl space-y-6">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center gap-2">
+              <i class="fa-solid fa-crosshairs text-sky-400"></i>
+              全市場成分股跨 ETF 配置追蹤
+            </h2>
+            <p class="text-xs text-slate-400 mt-1">
+              輸入任一個股名稱（如「台積電」、「聯發科」、「長榮」、「富邦金」）或代號，即時查清市場上哪些 ETF 持有該股票、佔比多少與持股量。
+            </p>
+          </div>
+
+          <!-- 搜尋與快捷標籤 -->
+          <div class="space-y-3">
+            <div class="flex items-center gap-3">
+              <div class="relative flex-1 max-w-md">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                <input 
+                  type="text" 
+                  v-model="stockTrackQuery" 
+                  @keyup.enter="searchStockAcross"
+                  placeholder="輸入股票名稱或代號 (如 台積電 或 2330)..."
+                  class="w-full bg-slate-900 border border-dark-border rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500">
+              </div>
+              <button 
+                type="button"
+                @click="searchStockAcross"
+                :disabled="loadingStockTrack"
+                class="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-sky-600/30">
+                <i class="fa-solid fa-search" :class="{ 'fa-spin': loadingStockTrack }"></i>
+                立即搜尋
+              </button>
+            </div>
+
+            <!-- 熱門個股快查標籤 -->
+            <div class="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+              <span class="text-slate-500 font-medium">常見標的快選:</span>
+              <button 
+                type="button"
+                v-for="s in ['台積電', '聯發科', '鴻海', '廣達', '長榮', '富邦金', '中信金', '欣興', '緯穎']" 
+                :key="s"
+                @click="trackStock(s)"
+                class="px-2.5 py-1 bg-slate-900 border border-dark-border rounded-lg text-slate-300 hover:text-sky-400 hover:border-sky-500/40 transition cursor-pointer">
+                {{ s }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 橫向權重排行圖容器 -->
+          <div v-show="stockTrackResults && stockTrackResults.length > 0" class="border border-dark-border rounded-xl p-4 bg-slate-900/40">
+            <h4 class="text-xs font-bold text-slate-300 mb-2 flex items-center gap-1.5">
+              <i class="fa-solid fa-chart-column text-amber-400"></i>
+              各 ETF 持有「{{ stockTrackQuery }}」權重排行 (Top 10)
+            </h4>
+            <div id="stockRankChart" class="w-full h-56"></div>
+          </div>
+
+          <!-- 搜尋結果列表 -->
+          <div v-if="stockTrackResults !== null" class="space-y-4">
+            <div class="flex items-center justify-between text-xs text-slate-400">
+              <span>全市場共找到 <strong class="text-sky-400 font-bold">{{ stockTrackResults.length }}</strong> 檔 ETF 持有「{{ stockTrackQuery }}」:</span>
+            </div>
+
+            <div v-if="stockTrackResults.length === 0" class="py-12 text-center text-slate-500 text-xs">
+              <i class="fa-regular fa-face-meh text-3xl mb-2 block"></i>
+              目前已入庫的 ETF 中，暫查無持有「{{ stockTrackQuery }}」的標的
+            </div>
+
+            <div v-else class="overflow-x-auto rounded-xl border border-dark-border">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead class="bg-slate-900/90 text-slate-400 font-medium border-b border-dark-border">
+                  <tr>
+                    <th class="py-3 px-4 w-12 text-center">#</th>
+                    <th class="py-3 px-4">ETF 代號</th>
+                    <th class="py-3 px-4">ETF 名稱</th>
+                    <th class="py-3 px-4">成分股名稱</th>
+                    <th class="py-3 px-4 min-w-[180px]">持股權重 (%)</th>
+                    <th class="py-3 px-4 text-right">持有股數</th>
+                    <th class="py-3 px-4 text-center">資料日期</th>
+                    <th class="py-3 px-4 text-center">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-dark-border font-mono">
+                  <tr 
+                    v-for="(r, idx) in stockTrackResults" 
+                    :key="r.etf_code"
+                    class="hover:bg-slate-800/50 transition">
+                    <td class="py-3 px-4 text-center text-slate-500 font-sans">{{ idx + 1 }}</td>
+                    <td class="py-3 px-4 font-bold text-sky-400">{{ r.etf_code }}</td>
+                    <td class="py-3 px-4 font-sans font-bold text-slate-200">{{ r.etf_name }}</td>
+                    <td class="py-3 px-4 font-sans text-slate-300">{{ r.stock_name }} ({{ r.stock_code }})</td>
+                    <td class="py-3 px-4">
+                      <div class="flex items-center gap-2">
+                        <span class="w-12 text-right font-bold text-slate-100">{{ r.weight.toFixed(2) }}%</span>
+                        <div class="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden max-w-[120px]">
+                          <div 
+                            class="bg-gradient-to-r from-amber-500 to-sky-500 h-full rounded-full" 
+                            :style="{ width: Math.min(r.weight * 2, 100) + '%' }"></div>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="py-3 px-4 text-right text-slate-300">{{ r.shares ? Number(r.shares).toLocaleString() : '--' }}</td>
+                    <td class="py-3 px-4 text-center text-slate-400">{{ r.record_date }}</td>
+                    <td class="py-3 px-4 text-center">
+                      <button 
+                        @click="selectETF(r.etf_code); switchTab('analysis');"
+                        class="px-2 py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 rounded border border-sky-500/30 text-[11px] transition font-sans cursor-pointer">
+                        前往分析
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- 個股在該 ETF 的歷史走勢 Modal -->
+    <div 
+      v-if="stockHistoryModal.visible"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div class="bg-dark-card border border-dark-border rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-4 p-6">
+        <div class="flex items-center justify-between border-b border-dark-border pb-3">
+          <div>
+            <h3 class="font-bold text-base text-white flex items-center gap-2">
+              <i class="fa-solid fa-chart-line text-sky-400"></i>
+              {{ currentCode }} - 「{{ stockHistoryModal.stockName }}」歷史持股軌跡
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">該個股在該 ETF 的權重與股數變動紀錄</p>
+          </div>
+          <button 
+            @click="stockHistoryModal.visible = false"
+            class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+
+        <div id="stockHistoryChart" class="w-full h-72"></div>
+
+        <div class="flex justify-end pt-2">
+          <button 
+            @click="stockHistoryModal.visible = false"
+            class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition">
+            關閉
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 頁尾 Footer -->
+    <footer class="border-t border-dark-border bg-slate-900/60 py-4 text-center text-xs text-slate-500">
+      <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <span>台灣股市 ETF 全市場資料庫自動排程採集系統</span>
+        <div class="flex items-center gap-3">
+          <a href="https://github.com/dj8111/taiwan-etf-holdings" target="_blank" class="hover:text-slate-300 transition">
+            <i class="fa-brands fa-github mr-1"></i>GitHub 專案首頁
+          </a>
+          <span>·</span>
+          <span>資料更新依臺灣證券交易所與各投信公告為準</span>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Vue 3 核心邏輯腳本 -->
+  <script>
+    const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        const activeTab = ref('analysis');
+        const currentCode = ref('00878');
+        const hotEtfs = ['0050', '0056', '00878', '00919', '00929', '006208', '00713', '00918'];
+        
+        // 資料庫概況
+        const stats = ref({
+          total_funds: 364,
+          funds_with_holdings: 0,
+          total_holdings_records: 0,
+          latest_nav_date: ''
+        });
+
+        // 全域 ETF 清單與搜尋
+        const allEtfs = ref([]);
+        const searchKeyword = ref('');
+        const showSearchDropdown = ref(false);
+
+        // 摘要與導航
+        const currentSummary = ref(null);
+        const availableDates = ref([]);
+        const selectedHoldingDate = ref('');
+        const holdings = ref([]);
+        const holdingFilter = ref('');
+        const holdingsMeta = ref({
+          is_latest: true,
+          record_date: '',
+          previous_date: null,
+          next_date: null,
+          latest_date: '',
+          total_count: 0,
+          total_weight: 0
+        });
+
+        const switchToLatest = async () => {
+          if (holdingsMeta.value.latest_date) {
+            selectedHoldingDate.value = holdingsMeta.value.latest_date;
+            await loadHoldings();
+          }
+        };
+
+        // 載入狀態
+        const loadingNavs = ref(false);
+        const loadingHoldings = ref(false);
+        const chartDays = ref(90);
+
+        // 圖表實例
+        let navChartInstance = null;
+        let pieChartInstance = null;
+        let stockHistoryChartInstance = null;
+        let stockRankChartInstance = null;
+
+        // 換股比對 (Diff)
+        const diffDateOld = ref('');
+        const diffDateNew = ref('');
+        const diffResult = ref(null);
+        const diffNotice = ref('');
+        const loadingDiff = ref(false);
+
+        // 跨 ETF 追蹤個股
+        const stockTrackQuery = ref('台積電');
+        const stockTrackResults = ref(null);
+        const loadingStockTrack = ref(false);
+
+        // 個股歷史 Modal
+        const stockHistoryModal = ref({
+          visible: false,
+          stockName: '',
+          data: []
+        });
+
+        // 頁籤切換
+        const switchTab = (tabName) => {
+          activeTab.value = tabName;
+          diffNotice.value = '';
+          if (tabName === 'analysis') {
+            nextTick(() => {
+              if (navChartInstance) navChartInstance.resize();
+              if (pieChartInstance) pieChartInstance.resize();
+            });
+          } else if (tabName === 'diff') {
+            diffResult.value = null;
+          } else if (tabName === 'stock_tracker') {
+            if (!stockTrackResults.value) {
+              searchStockAcross();
+            } else {
+              nextTick(() => {
+                if (stockRankChartInstance) stockRankChartInstance.resize();
+              });
+            }
+          }
+        };
+
+        // 載入資料庫狀態
+        const loadStats = async () => {
+          try {
+            const res = await fetch('/api/stats');
+            if (res.ok) {
+              stats.value = await res.json();
+            }
+          } catch (e) {
+            console.error('統計載入失敗', e);
+          }
+        };
+
+        // 搜尋過濾
+        const filteredEtfs = computed(() => {
+          if (!searchKeyword.value.trim()) return allEtfs.value;
+          const kw = searchKeyword.value.trim().toLowerCase();
+          return allEtfs.value.filter(e => 
+            e.etf_code.toLowerCase().includes(kw) || 
+            e.name.toLowerCase().includes(kw)
+          );
+        });
+
+        // 成分股過濾
+        const filteredHoldings = computed(() => {
+          if (!holdingFilter.value.trim()) return holdings.value;
+          const kw = holdingFilter.value.trim().toLowerCase();
+          return holdings.value.filter(h => 
+            h.stock_code.toLowerCase().includes(kw) || 
+            h.stock_name.toLowerCase().includes(kw)
+          );
+        });
+
+        // 載入 ETF 清單
+        const loadAllEtfs = async () => {
+          try {
+            const res = await fetch('/api/etfs');
+            allEtfs.value = await res.json();
+          } catch (err) {
+            console.error('載入 ETF 清單失敗:', err);
+          }
+        };
+
+        // 選取 ETF
+        const selectETF = async (code) => {
+          if (!code) return;
+          currentCode.value = code;
+          searchKeyword.value = '';
+          showSearchDropdown.value = false;
+          diffResult.value = null;
+          diffNotice.value = '';
+          selectedHoldingDate.value = ''; // 清除上一檔 ETF 的日期殘留
+          holdings.value = [];            // 清空舊持股列表避免殘留
+          availableDates.value = [];
+
+          await Promise.all([
+            loadSummary(),
+            loadDates(),
+            loadNavHistory(),
+          ]);
+        };
+
+        const onSelectSearchResult = (code) => {
+          selectETF(code);
+        };
+
+        // 載入摘要
+        const loadSummary = async () => {
+          try {
+            const res = await fetch(`/api/etf/${currentCode.value}/summary`);
+            if (res.ok) {
+              currentSummary.value = await res.json();
+            }
+          } catch (err) {
+            console.error('載入摘要失敗:', err);
+          }
+        };
+
+        // 載入可選歷史日期
+        const loadDates = async () => {
+          try {
+            const res = await fetch(`/api/etf/${currentCode.value}/dates`);
+            const dates = await res.json();
+            availableDates.value = dates || [];
+            if (dates && dates.length > 0) {
+              selectedHoldingDate.value = dates[0];
+              if (dates.length >= 2) {
+                diffDateNew.value = dates[0];
+                diffDateOld.value = dates[1];
+              } else {
+                diffDateNew.value = dates[0];
+                diffDateOld.value = dates[0];
+              }
+              await loadHoldings();
+            } else {
+              selectedHoldingDate.value = '';
+              holdings.value = [];
+              holdingsMeta.value = {
+                is_latest: true,
+                record_date: '',
+                previous_date: null,
+                next_date: null,
+                latest_date: '',
+                total_count: 0,
+                total_weight: 0
+              };
+              renderPieChart([]);
+            }
+          } catch (err) {
+            console.error('載入持股日期失敗:', err);
+          }
+        };
+
+        // 載入指定日期的成分股
+        const loadHoldings = async () => {
+          loadingHoldings.value = true;
+          try {
+            // 防禦性檢查：若日期不在當前 ETF 可用清單內，直接抓最新
+            const isValidDate = availableDates.value.includes(selectedHoldingDate.value);
+            const queryDate = isValidDate ? selectedHoldingDate.value : '';
+            const url = queryDate 
+              ? `/api/etf/${currentCode.value}/holdings?date=${queryDate}`
+              : `/api/etf/${currentCode.value}/holdings`;
+            const res = await fetch(url);
+            const data = await res.json();
+            holdings.value = data.holdings || [];
+            if (data.record_date) {
+              selectedHoldingDate.value = data.record_date;
+            }
+            holdingsMeta.value = {
+              is_latest: data.is_latest !== undefined ? data.is_latest : true,
+              record_date: data.record_date || selectedHoldingDate.value,
+              previous_date: data.previous_date || null,
+              next_date: data.next_date || null,
+              latest_date: data.latest_date || (availableDates.value.length > 0 ? availableDates.value[0] : ''),
+              total_count: data.total_count || holdings.value.length,
+              total_weight: data.total_weight || 0
+            };
+            renderPieChart(holdings.value);
+          } catch (err) {
+            console.error('載入成分股明細失敗:', err);
+          } finally {
+            loadingHoldings.value = false;
+          }
+        };
+
+        // 載入淨值歷史走勢圖
+        const loadNavHistory = async () => {
+          loadingNavs.value = true;
+          try {
+            const res = await fetch(`/api/etf/${currentCode.value}/nav_history?limit=${chartDays.value}`);
+            const data = await res.json();
+            renderNavChart(data);
+          } catch (err) {
+            console.error('載入淨值歷史失敗:', err);
+          } finally {
+            loadingNavs.value = false;
+          }
+        };
+
+        const changeChartDays = (days) => {
+          chartDays.value = days;
+          loadNavHistory();
+        };
+
+        // 繪製淨值與市價走勢圖 (ECharts)
+        const renderNavChart = (navData) => {
+          const chartDom = document.getElementById('navChart');
+          if (!chartDom) return;
+          if (!navChartInstance) {
+            navChartInstance = echarts.init(chartDom);
+            window.addEventListener('resize', () => navChartInstance.resize());
+          }
+
+          if (!navData || navData.length === 0) {
+            navChartInstance.clear();
+            navChartInstance.setOption({
+              title: { text: '暫無歷史淨值紀錄', left: 'center', top: 'center', textStyle: { color: '#64748b' } }
+            });
+            return;
+          }
+
+          const dates = navData.map(d => d.record_date);
+          const navs = navData.map(d => d.nav);
+          const prices = navData.map(d => d.close_price);
+          const diffPcts = navData.map(d => d.premium_discount_pct);
+
+          const option = {
+            backgroundColor: 'transparent',
+            tooltip: {
+              trigger: 'axis',
+              backgroundColor: '#0f172a',
+              borderColor: '#334155',
+              textStyle: { color: '#e2e8f0', fontSize: 12 },
+              formatter: function(params) {
+                const date = params[0].axisValue;
+                let html = `<div class="font-bold border-b border-slate-700 pb-1 mb-1">${date}</div>`;
+                params.forEach(p => {
+                  let val = p.value !== undefined && p.value !== null ? p.value : '--';
+                  if (p.seriesName.includes('率')) val = val + '%';
+                  else val = '$' + val;
+                  html += `<div class="flex items-center justify-between gap-4 py-0.5">
+                    <span style="color:${p.color}">${p.seriesName}</span>
+                    <strong class="font-mono">${val}</strong>
+                  </div>`;
+                });
+                return html;
+              }
+            },
+            legend: {
+              data: ['每單位淨值 (NAV)', '市價 (現值)', '折溢價率 (%)'],
+              textStyle: { color: '#94a3b8' },
+              top: 0,
+              right: 10
+            },
+            grid: [
+              { left: '4%', right: '4%', top: '15%', height: '55%' },
+              { left: '4%', right: '4%', top: '78%', height: '18%' }
+            ],
+            xAxis: [
+              {
+                type: 'category',
+                data: dates,
+                gridIndex: 0,
+                axisLine: { lineStyle: { color: '#334155' } },
+                axisLabel: { color: '#94a3b8', fontSize: 10 },
+                boundaryGap: false,
+              },
+              {
+                type: 'category',
+                data: dates,
+                gridIndex: 1,
+                axisLine: { lineStyle: { color: '#334155' } },
+                axisLabel: { show: false },
+                boundaryGap: true,
+              }
+            ],
+            yAxis: [
+              {
+                type: 'value',
+                gridIndex: 0,
+                scale: true,
+                splitLine: { lineStyle: { color: '#1e293b' } },
+                axisLabel: { color: '#94a3b8', fontSize: 10 }
+              },
+              {
+                type: 'value',
+                gridIndex: 1,
+                splitLine: { lineStyle: { color: '#1e293b' } },
+                axisLabel: { color: '#94a3b8', fontSize: 9, formatter: '{value}%' }
+              }
+            ],
+            series: [
+              {
+                name: '每單位淨值 (NAV)',
+                type: 'line',
+                data: navs,
+                smooth: true,
+                showSymbol: navs.length < 30,
+                symbolSize: 6,
+                lineStyle: { width: 2.5, color: '#38bdf8' },
+                itemStyle: { color: '#38bdf8' },
+                areaStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                    { offset: 0, color: 'rgba(56, 189, 248, 0.25)' },
+                    { offset: 1, color: 'rgba(56, 189, 248, 0.0)' }
+                  ])
+                }
+              },
+              {
+                name: '市價 (現值)',
+                type: 'line',
+                data: prices,
+                smooth: true,
+                showSymbol: prices.length < 30,
+                symbolSize: 6,
+                lineStyle: { width: 2, color: '#fbbf24' },
+                itemStyle: { color: '#fbbf24' }
+              },
+              {
+                name: '折溢價率 (%)',
+                type: 'bar',
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: diffPcts,
+                itemStyle: {
+                  color: function(param) {
+                    return param.value >= 0 ? '#f87171' : '#34d399';
+                  }
+                }
+              }
+            ]
+          };
+
+          navChartInstance.setOption(option, true);
+        };
+
+        // 繪製 Top 10 成分股圓餅圖 (ECharts)
+        const renderPieChart = (items) => {
+          const chartDom = document.getElementById('pieChart');
+          if (!chartDom) return;
+          if (!pieChartInstance) {
+            pieChartInstance = echarts.init(chartDom);
+            window.addEventListener('resize', () => pieChartInstance.resize());
+          }
+
+          if (!items || items.length === 0) {
+            pieChartInstance.clear();
+            pieChartInstance.setOption({
+              title: { text: '暫無持股分佈資料', left: 'center', top: 'center', textStyle: { color: '#64748b' } }
+            });
+            return;
+          }
+
+          const top10 = items.slice(0, 10);
+          const otherWeight = items.slice(10).reduce((acc, cur) => acc + cur.weight, 0);
+          
+          const pieData = top10.map(i => ({ name: i.stock_name, value: i.weight }));
+          if (otherWeight > 0) {
+            pieData.push({ name: '其他成分股', value: Number(otherWeight.toFixed(2)) });
+          }
+
+          const option = {
+            backgroundColor: 'transparent',
+            tooltip: {
+              trigger: 'item',
+              backgroundColor: '#0f172a',
+              borderColor: '#334155',
+              textStyle: { color: '#e2e8f0', fontSize: 12 },
+              formatter: '{b}: <strong class="font-mono">{c}%</strong> ({d}%)'
+            },
+            legend: {
+              type: 'scroll',
+              orient: 'horizontal',
+              bottom: 0,
+              textStyle: { color: '#94a3b8', fontSize: 10 }
+            },
+            series: [
+              {
+                name: '持股比重',
+                type: 'pie',
+                radius: ['45%', '72%'],
+                center: ['50%', '45%'],
+                avoidLabelOverlap: false,
+                itemStyle: {
+                  borderRadius: 6,
+                  borderColor: '#111827',
+                  borderWidth: 2
+                },
+                label: { show: false },
+                emphasis: {
+                  label: {
+                    show: true,
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    color: '#fff',
+                    formatter: '{b}\n{c}%'
+                  }
+                },
+                data: pieData
+              }
+            ]
+          };
+
+          pieChartInstance.setOption(option, true);
+        };
+
+        // 換股比對分析 (Diff)
+        const runDiffAnalysis = async () => {
+          diffNotice.value = '';
+          if (!diffDateOld.value || !diffDateNew.value) {
+            diffNotice.value = '請選擇要進行比對的兩個歷史基準日。';
+            return;
+          }
+          if (diffDateOld.value === diffDateNew.value) {
+            diffNotice.value = `您選取的兩天日期相同 (${diffDateOld.value})，請選取兩個不同的歷史日期進行成分股比對。目前此檔 ETF 尚無足夠的不同歷史日。`;
+            return;
+          }
+
+          loadingDiff.value = true;
+          try {
+            const res = await fetch(`/api/etf/${currentCode.value}/diff?date_old=${diffDateOld.value}&date_new=${diffDateNew.value}`);
+            if (res.ok) {
+              diffResult.value = await res.json();
+            } else {
+              const err = await res.json();
+              diffNotice.value = err.detail || '比對失敗';
+            }
+          } catch (err) {
+            diffNotice.value = '連線異常，無法完成換股比對。';
+          } finally {
+            loadingDiff.value = false;
+          }
+        };
+
+        // 快捷點選個股
+        const trackStock = (s) => {
+          stockTrackQuery.value = s;
+          searchStockAcross();
+        };
+
+        // 跨 ETF 追蹤個股
+        const searchStockAcross = async () => {
+          if (!stockTrackQuery.value.trim()) return;
+          loadingStockTrack.value = true;
+          try {
+            const res = await fetch(`/api/search/stock?keyword=${encodeURIComponent(stockTrackQuery.value.trim())}`);
+            const data = await res.json();
+            stockTrackResults.value = data || [];
+            renderStockRankChart(stockTrackResults.value);
+          } catch (err) {
+            console.error('跨 ETF 搜尋失敗:', err);
+          } finally {
+            loadingStockTrack.value = false;
+          }
+        };
+
+        // 繪製跨 ETF 個股排行長條圖 (ECharts)
+        const renderStockRankChart = (results) => {
+          nextTick(() => {
+            const chartDom = document.getElementById('stockRankChart');
+            if (!chartDom) return;
+            if (!stockRankChartInstance) {
+              stockRankChartInstance = echarts.init(chartDom);
+              window.addEventListener('resize', () => stockRankChartInstance.resize());
+            }
+
+            if (!results || results.length === 0) {
+              stockRankChartInstance.clear();
+              return;
+            }
+
+            const top = results.slice(0, 10).reverse();
+            const names = top.map(r => `${r.etf_code} ${r.etf_name.slice(0, 6)}`);
+            const weights = top.map(r => r.weight);
+
+            const option = {
+              backgroundColor: 'transparent',
+              tooltip: {
+                trigger: 'axis',
+                backgroundColor: '#0f172a',
+                borderColor: '#334155',
+                textStyle: { color: '#e2e8f0', fontSize: 12 },
+                formatter: '{b}: <strong class="font-mono text-amber-400">{c}%</strong>'
+              },
+              grid: { left: '3%', right: '8%', top: '8%', bottom: '5%', containLabel: true },
+              xAxis: {
+                type: 'value',
+                axisLabel: { color: '#94a3b8', formatter: '{value}%' },
+                splitLine: { lineStyle: { color: '#1e293b' } }
+              },
+              yAxis: {
+                type: 'category',
+                data: names,
+                axisLabel: { color: '#e2e8f0', fontSize: 11 },
+                axisLine: { lineStyle: { color: '#334155' } }
+              },
+              series: [
+                {
+                  type: 'bar',
+                  data: weights,
+                  itemStyle: {
+                    color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [
+                      { offset: 0, color: '#fbbf24' },
+                      { offset: 1, color: '#d97706' }
+                    ]),
+                    borderRadius: [0, 4, 4, 0]
+                  },
+                  label: {
+                    show: true,
+                    position: 'right',
+                    color: '#fbbf24',
+                    fontFamily: 'monospace',
+                    formatter: '{c}%'
+                  }
+                }
+              ]
+            };
+
+            stockRankChartInstance.setOption(option, true);
+          });
+        };
+
+        // 個股歷史軌跡 Modal
+        const openStockHistoryModal = async (stockName) => {
+          stockHistoryModal.value.stockName = stockName;
+          stockHistoryModal.value.visible = true;
+
+          await nextTick();
+          const chartDom = document.getElementById('stockHistoryChart');
+          if (!chartDom) return;
+          if (!stockHistoryChartInstance) {
+            stockHistoryChartInstance = echarts.init(chartDom);
+            window.addEventListener('resize', () => stockHistoryChartInstance.resize());
+          }
+
+          stockHistoryChartInstance.showLoading({ color: '#38bdf8', maskColor: 'rgba(15, 23, 42, 0.6)' });
+
+          try {
+            const res = await fetch(`/api/etf/${currentCode.value}/stock_history?stock=${encodeURIComponent(stockName)}`);
+            const data = await res.json();
+            stockHistoryChartInstance.hideLoading();
+
+            if (!data || data.length === 0) {
+              stockHistoryChartInstance.setOption({
+                title: { text: '暫無歷史軌跡資料', left: 'center', top: 'center', textStyle: { color: '#64748b' } }
+              });
+              return;
+            }
+
+            const dates = data.map(d => d.record_date);
+            const weights = data.map(d => d.weight);
+            const shares = data.map(d => d.shares);
+
+            const option = {
+              backgroundColor: 'transparent',
+              tooltip: {
+                trigger: 'axis',
+                backgroundColor: '#0f172a',
+                borderColor: '#334155',
+                textStyle: { color: '#e2e8f0', fontSize: 12 },
+              },
+              legend: {
+                data: ['持股權重 (%)', '持有股數'],
+                textStyle: { color: '#94a3b8' },
+                top: 0
+              },
+              grid: { left: '4%', right: '6%', bottom: '10%', top: '15%', containLabel: true },
+              xAxis: {
+                type: 'category',
+                data: dates,
+                axisLine: { lineStyle: { color: '#334155' } },
+                axisLabel: { color: '#94a3b8', fontSize: 10 }
+              },
+              yAxis: [
+                {
+                  type: 'value',
+                  name: '權重 (%)',
+                  axisLabel: { color: '#94a3b8', formatter: '{value}%' },
+                  splitLine: { lineStyle: { color: '#1e293b' } }
+                },
+                {
+                  type: 'value',
+                  name: '股數',
+                  axisLabel: { color: '#94a3b8' },
+                  splitLine: { show: false }
+                }
+              ],
+              series: [
+                {
+                  name: '持股權重 (%)',
+                  type: 'line',
+                  data: weights,
+                  smooth: true,
+                  lineStyle: { width: 2.5, color: '#38bdf8' },
+                  itemStyle: { color: '#38bdf8' },
+                  symbolSize: 6,
+                },
+                {
+                  name: '持有股數',
+                  type: 'bar',
+                  yAxisIndex: 1,
+                  data: shares,
+                  itemStyle: { color: 'rgba(251, 191, 36, 0.4)', borderRadius: [4, 4, 0, 0] }
+                }
+              ]
+            };
+
+            stockHistoryChartInstance.setOption(option, true);
+          } catch (err) {
+            console.error('查詢個股歷史失敗:', err);
+            stockHistoryChartInstance.hideLoading();
+          }
+        };
+
+        // 輔助判斷
+        const isPremium = () => {
+          const pct = currentSummary.value?.latest_nav?.premium_discount_pct;
+          return pct !== undefined && pct !== null && pct >= 0;
+        };
+
+        const formatPremium = (pct) => {
+          if (pct === undefined || pct === null) return '--%';
+          const prefix = pct > 0 ? '+' : '';
+          return `${prefix}${pct.toFixed(2)}%`;
+        };
+
+        const getPriceDiff = () => {
+          const nav = currentSummary.value?.latest_nav?.nav;
+          const price = currentSummary.value?.latest_nav?.close_price;
+          if (nav && price) {
+            const diff = price - nav;
+            const prefix = diff > 0 ? '+' : '';
+            return `${prefix}$${diff.toFixed(2)}`;
+          }
+          return '--';
+        };
+
+        // 點擊視窗外部關閉搜尋下拉
+        window.addEventListener('click', () => {
+          showSearchDropdown.value = false;
+        });
+
+        onMounted(async () => {
+          await loadStats();
+          await loadAllEtfs();
+          await selectETF('00878');
+          // 預設跑一次台積電跨 ETF 搜尋
+          searchStockAcross();
+        });
+
+        return {
+          activeTab,
+          switchTab,
+          currentCode,
+          hotEtfs,
+          stats,
+          loadStats,
+          allEtfs,
+          searchKeyword,
+          showSearchDropdown,
+          filteredEtfs,
+          currentSummary,
+          availableDates,
+          selectedHoldingDate,
+          holdings,
+          holdingFilter,
+          filteredHoldings,
+          holdingsMeta,
+          switchToLatest,
+          loadingNavs,
+          loadingHoldings,
+          chartDays,
+          diffDateOld,
+          diffDateNew,
+          diffResult,
+          diffNotice,
+          loadingDiff,
+          stockTrackQuery,
+          stockTrackResults,
+          loadingStockTrack,
+          stockHistoryModal,
+          selectETF,
+          onSelectSearchResult,
+          loadHoldings,
+          changeChartDays,
+          runDiffAnalysis,
+          trackStock,
+          searchStockAcross,
+          openStockHistoryModal,
+          isPremium,
+          formatPremium,
+          getPriceDiff,
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

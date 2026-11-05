@@ -73,7 +73,7 @@ def fetch_all_taiwan_etf_codes() -> List[dict]:
     return []
 
 
-def fetch_and_save(etf_codes: List[str]):
+def fetch_and_save(etf_codes: List[str], sync_nav: bool = True):
     # 1. 抓取持股明細
     engine, SessionFactory = init_db()
     collectors = get_collectors()
@@ -112,7 +112,8 @@ def fetch_and_save(etf_codes: List[str]):
                 print(f"    [X] 未能取得 {code} 的持股明細資料。\n")
 
     # 2. 同步更新這幾檔 ETF 的當日淨值
-    fetch_and_save_navs(etf_codes)
+    if sync_nav:
+        fetch_and_save_navs(etf_codes)
 
 
 def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
@@ -136,7 +137,7 @@ def fetch_all_batch(limit: Optional[int] = None, delay: float = 1.0):
     codes = [e["code"] for e in target_etfs]
     for i, code in enumerate(codes, 1):
         print(f"[{i}/{len(codes)}] 處理 {code} ({target_etfs[i-1]['name'][:12]}) 持股明細...")
-        fetch_and_save([code])
+        fetch_and_save([code], sync_nav=False)
         if delay > 0 and i < len(codes):
             time.sleep(delay)
 
@@ -433,6 +434,11 @@ def main():
     search_parser = subparsers.add_parser("search", help="跨 ETF 搜尋某檔個股的權重配置")
     search_parser.add_argument("keyword", help="股票名稱或代號 (如 台積電)")
 
+    # web 命令
+    web_parser = subparsers.add_parser("web", help="啟動 ETF 查詢與視覺化走勢網頁系統")
+    web_parser.add_argument("--port", type=int, default=8000, help="網頁伺服器連接埠 (預設 8000)")
+    web_parser.add_argument("--host", default="127.0.0.1", help="綁定主機位址 (預設 127.0.0.1)")
+
     args = parser.parse_args()
 
     if args.command == "fetch":
@@ -457,10 +463,14 @@ def main():
         list_dates(args.code)
     elif args.command == "search":
         search_stock(args.keyword)
+    elif args.command == "web":
+        from server import run_server
+        run_server(host=args.host, port=args.port)
     else:
         print("未指定子命令，常用命令:")
         print("  python main.py fetch-nav          更新全市場 364 檔 ETF 每日淨值與折溢價")
         print("  python main.py fetch-all          批次抓取全市場 364 檔 ETF 持股明細與淨值")
+        print("  python main.py web                啟動視覺化查詢網頁 (http://localhost:8000)")
         print("  python main.py nav <代號>         查看該 ETF 歷史每日淨值與折溢價")
         print("  python main.py show <代號>        查看該 ETF 最新每單位淨值與成分股明細")
 

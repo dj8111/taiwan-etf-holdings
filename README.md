@@ -12,6 +12,7 @@
   - **每日成分股權重**：各檔 ETF 完整成分股清單、持股數與權重比例（%）。
 - **永久歷史時間序列**：內建 SQLAlchemy ORM 模型，以 `record_date` 為基準累積歷史，支援任意日期間換股增減比對（`diff`）與個股走勢追蹤（`history`）。
 - **多格式同步保存**：自動更新 SQLite 資料庫（`etf_data.db`），並匯出全歷史 CSV（`data/etf_holdings_all_history.csv`、`data/etf_navs_history.csv`）與每日分檔封存（`data/daily/YYYY-MM-DD.csv`）。
+- **📊 視覺化 Web 儀表板**：內建 FastAPI + ECharts 現代單頁應用（SPA），提供淨值/現值走勢雙曲線、折溢價幅度、Top 10 持股圓餅圖、歷史持股切換、換股比對 (Diff) 與跨 ETF 個股追蹤。
 - **GitHub Actions 全市場自動化**：每個台股交易日收盤後（週一至週五 18:30 台灣時間）自動啟動【全市場極限模式】，更新 364 檔 ETF 並 Commit 回儲存庫。
 
 ---
@@ -19,6 +20,9 @@
 ## 🚀 本地常用操作指令
 
 ```bash
+# 啟動 ETF 視覺化查詢網頁 (開啟瀏覽器造訪 http://localhost:8000)
+python main.py web
+
 # 啟動全市場極限模式 (批次抓取 364 檔每日淨值 + 持股)
 python main.py fetch-all
 
