@@ -14,9 +14,19 @@ from sqlalchemy import func, desc, asc
 
 from db.models import init_db, ETFFund, ETFHolding, ETFNav
 from db.repository import ETFRepository
+from github_sync import sync_from_github, get_sync_status, get_remote_commit_info
 
-# 初始化資料庫連線
+# 初始化資料庫連線與動態工廠
 engine, SessionFactory = init_db()
+
+def get_session():
+    return SessionFactory()
+
+def reload_db():
+    global engine, SessionFactory
+    if engine:
+        engine.dispose()
+    engine, SessionFactory = init_db()
 
 app = FastAPI(
     title="台灣股市 ETF 持股與淨值查詢系統",
@@ -70,33 +80,43 @@ def get_stats():
 
 
 @app.get("/api/github/status")
-def get_github_status():
+def get_github_status_api():
     """
-    取得 GitHub 遠端儲存庫最新資訊與數據同步狀態
+    取得 GitHub 遠端儲存庫與本地數據同步狀態
     """
-    import requests
-    repo_url = "https://api.github.com/repos/dj8111/taiwan-etf-holdings"
-    try:
-        r = requests.get(repo_url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "connected": True,
-                "repo_name": data.get("full_name"),
-                "html_url": data.get("html_url"),
-                "pushed_at": data.get("pushed_at"),
-                "description": data.get("description"),
-                "default_branch": data.get("default_branch", "main"),
-            }
-    except Exception as e:
-        pass
-    
+    sync_status = get_sync_status()
+    remote_info = get_remote_commit_info()
+
     return {
-        "connected": False,
         "repo_name": "dj8111/taiwan-etf-holdings",
-        "html_url": "https://github.com/dj8111/taiwan-etf-holdings",
-        "default_branch": "main",
+        "repo_url": "https://github.com/dj8111/taiwan-etf-holdings",
+        "last_sync_time": sync_status.get("last_sync_time"),
+        "current_sha": sync_status.get("last_commit_sha", "main"),
+        "remote_sha": remote_info.get("sha") if remote_info.get("success") else None,
+        "remote_commit_date": remote_info.get("commit_date"),
+        "remote_message": remote_info.get("message"),
+        "has_update": (
+            remote_info.get("success") and 
+            remote_info.get("sha") != sync_status.get("last_commit_sha")
+        )
     }
+
+
+@app.post("/api/github/sync")
+@app.get("/api/github/sync")
+def trigger_github_sync(force: bool = False):
+    """
+    手動或自動觸發自 GitHub 遠端儲存庫同步最新 etf_data.db 與報表
+    """
+    def dispose():
+        global engine
+        if engine:
+            engine.dispose()
+
+    result = sync_from_github(dispose_callback=dispose, force=force)
+    # 同步完成後重新載入資料庫連線
+    reload_db()
+    return result
 
 
 @app.get("/api/etfs")

@@ -26,5 +26,6 @@ Thumbs.db
 
 # Analysis / Tools
 graphify-out/
+.github_sync_status.json
 
 

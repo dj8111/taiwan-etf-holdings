@@ -133,6 +133,17 @@
             </div>
           </div>
 
+          <!-- 一鍵從 GitHub 同步按鈕 -->
+          <button 
+            type="button"
+            @click="syncFromGitHub"
+            :disabled="syncingGitHub"
+            title="從 GitHub 儲存庫取得 GitHub Actions 最新自動採集的資料"
+            class="px-2.5 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-medium rounded-lg text-xs flex items-center gap-1.5 transition shadow-sm cursor-pointer disabled:opacity-50">
+            <i class="fa-solid fa-arrows-rotate" :class="{ 'fa-spin': syncingGitHub }"></i>
+            <span class="hidden sm:inline">{{ syncingGitHub ? '同步中...' : '同步 GitHub' }}</span>
+          </button>
+
           <!-- GitHub 儲存庫按鈕 -->
           <a 
             href="https://github.com/dj8111/taiwan-etf-holdings" 
@@ -140,27 +151,38 @@
             title="造訪 GitHub 專案儲存庫"
             class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-dark-border text-slate-300 rounded-lg text-xs flex items-center gap-1.5 transition">
             <i class="fa-brands fa-github text-sm"></i>
-            <span class="hidden sm:inline">GitHub</span>
+            <span class="hidden sm:inline">Repo</span>
           </a>
         </div>
 
       </div>
     </header>
 
-    <!-- 全域數據更新概況條 -->
-    <div class="bg-slate-900/60 border-b border-dark-border text-[11px] text-slate-400 py-1.5 px-4">
+    <!-- 全域數據更新概況條 (以 GitHub 為核心資料來源) -->
+    <div class="bg-slate-900/80 border-b border-dark-border text-[11px] text-slate-400 py-1.5 px-4 backdrop-blur-sm">
       <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-3">
-          <span><i class="fa-solid fa-database text-sky-400 mr-1"></i>資料庫總計: <strong class="text-slate-200">{{ stats.total_funds }}</strong> 檔 ETF</span>
-          <span><i class="fa-solid fa-list-check text-emerald-400 mr-1"></i>已入庫持股: <strong class="text-slate-200">{{ stats.funds_with_holdings }}</strong> 檔 (共 {{ stats.total_holdings_records }} 筆)</span>
-          <span><i class="fa-regular fa-clock text-amber-400 mr-1"></i>最新資料日: <strong class="text-slate-200">{{ stats.latest_nav_date || '即時' }}</strong></span>
+        <div class="flex items-center gap-3 flex-wrap">
+          <!-- 資料來源標記 -->
+          <span class="flex items-center gap-1.5 text-sky-300 bg-sky-950/60 border border-sky-800/40 px-2 py-0.5 rounded-full font-medium">
+            <i class="fa-brands fa-github text-xs"></i>
+            資料來源: GitHub 雲端倉庫
+          </span>
+          <span><i class="fa-solid fa-database text-sky-400 mr-1"></i>資料庫: <strong class="text-slate-200">{{ stats.total_funds }}</strong> 檔 ETF</span>
+          <span><i class="fa-solid fa-list-check text-emerald-400 mr-1"></i>已入庫持股: <strong class="text-slate-200">{{ stats.funds_with_holdings }}</strong> 檔 ({{ stats.total_holdings_records }} 筆)</span>
+          <span><i class="fa-regular fa-clock text-amber-400 mr-1"></i>最新資料基準日: <strong class="text-slate-200">{{ stats.latest_nav_date || '即時' }}</strong></span>
         </div>
-        <div class="flex items-center gap-2">
+        
+        <div class="flex items-center gap-3 text-slate-400">
+          <span v-if="githubInfo.last_sync_time" class="hidden md:inline">
+            <i class="fa-regular fa-calendar mr-1"></i>上次與 GitHub 同步: {{ githubInfo.last_sync_time }} (版本: {{ githubInfo.current_sha }})
+          </span>
           <button 
-            @click="loadStats" 
-            title="刷新資料庫統計"
-            class="hover:text-sky-400 transition flex items-center gap-1">
-            <i class="fa-solid fa-arrows-rotate text-[10px]"></i> 刷新狀態
+            @click="syncFromGitHub" 
+            :disabled="syncingGitHub"
+            title="從 GitHub 遠端拉取最新資料庫與持股報表"
+            class="text-sky-400 hover:text-sky-300 font-bold transition flex items-center gap-1 cursor-pointer">
+            <i class="fa-solid fa-cloud-arrow-down" :class="{ 'fa-bounce': syncingGitHub }"></i> 
+            {{ syncingGitHub ? '正在自 GitHub 同步...' : '檢查 GitHub 更新' }}
           </button>
         </div>
       </div>
@@ -842,6 +864,43 @@
           total_holdings_records: 0,
           latest_nav_date: ''
         });
+
+        // GitHub 同步狀態
+        const githubInfo = ref({
+          last_sync_time: '',
+          current_sha: '',
+          remote_sha: '',
+          has_update: false
+        });
+        const syncingGitHub = ref(false);
+
+        const loadGitHubStatus = async () => {
+          try {
+            const res = await fetch('/api/github/status');
+            if (res.ok) {
+              githubInfo.value = await res.json();
+            }
+          } catch (e) {
+            console.error('GitHub 狀態查詢失敗', e);
+          }
+        };
+
+        const syncFromGitHub = async () => {
+          syncingGitHub.value = true;
+          try {
+            const res = await fetch('/api/github/sync?force=true', { method: 'POST' });
+            const data = await res.json();
+            await loadGitHubStatus();
+            await loadStats();
+            await loadAllEtfs();
+            await selectETF(currentCode.value);
+            alert(`✅ ${data.message || '已成功自 GitHub 同步最新數據！'}`);
+          } catch (e) {
+            alert('⚠️ 同步失敗，請確認網路連線是否正常');
+          } finally {
+            syncingGitHub.value = false;
+          }
+        };
 
         // 全域 ETF 清單與搜尋
         const allEtfs = ref([]);
@@ -1527,6 +1586,7 @@
 
         onMounted(async () => {
           await loadStats();
+          await loadGitHubStatus();
           await loadAllEtfs();
           await selectETF('00878');
           // 預設跑一次台積電跨 ETF 搜尋
@@ -1540,6 +1600,9 @@
           hotEtfs,
           stats,
           loadStats,
+          githubInfo,
+          syncingGitHub,
+          syncFromGitHub,
           allEtfs,
           searchKeyword,
           showSearchDropdown,
